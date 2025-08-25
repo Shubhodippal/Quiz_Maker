@@ -518,7 +518,22 @@ database_id = "your-database-id"
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the **GNU General Public License v3.0 or later (GPL-3.0-or-later)** - see the [LICENSE](./LICENSE) file for details.
+
+### Key License Points:
+- ✅ **Free to use, modify, and distribute**
+- ✅ **Source code must remain available**
+- ✅ **Derivative works must use the same license**
+- ⚠️ **Commercial use allowed but with GPL obligations**
+- ⚠️ **No warranty provided**
+
+**Important**: If you distribute this software or create derivative works, you must:
+1. Include the original copyright notice
+2. Provide access to the source code
+3. License your derivative work under GPL v3.0 or later
+4. Include a copy of the GPL v3.0 license
+
+For more information about GPL v3.0, visit: https://www.gnu.org/licenses/gpl-3.0.html
 
 ## 🆘 Support
 

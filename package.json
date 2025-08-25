@@ -3,6 +3,12 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "license": "GPL-3.0-or-later",
+  "author": "Shubhodip Pal",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Shubhodippal/cloudflare-realtime-quiz.git"
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

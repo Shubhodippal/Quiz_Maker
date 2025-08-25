@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Quiz Admin Console</title>
+  <style>
+    :root{
+      --bg:#0b1220; --panel:#111827; --card:#0f172a; --ink:#e5e7eb; --muted:#94a3b8;
+      --border:#374151; --accent:#2563eb; --success:#16a34a; --warning:#f59e0b; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);margin:0;line-height:1.5}
+    .container{max-width:1200px;margin:24px auto;background:var(--panel);padding:24px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+    .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+    .stat-card{background:var(--card);padding:16px;border-radius:12px;text-align:center;border:1px solid var(--border)}
+    .stat-value{font-size:24px;font-weight:700;color:var(--accent)}
+    .stat-label{font-size:14px;color:var(--muted)}
+    .btn{padding:12px 20px;border-radius:12px;border:0;cursor:pointer;font-weight:500;transition:all 0.3s;display:inline-flex;align-items:center;gap:8px}
+    .btn-primary{background:var(--accent);color:#fff}
+    .btn-success{background:var(--success);color:#fff}
+    .btn-warning{background:var(--warning);color:#000}
+    .btn-danger{background:var(--danger);color:#fff}
+    .btn-secondary{background:var(--border);color:var(--ink)}
+    .btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
+    .btn:disabled{opacity:0.6;cursor:not-allowed;transform:none}
+    .card{background:var(--card);padding:20px;border-radius:12px;margin-bottom:16px;border:1px solid var(--border)}
+    .muted{color:var(--muted)}
+    .badge{display:inline-block;padding:6px 12px;border-radius:999px;background:var(--border);margin-right:6px;font-size:13px}
+    .badge.active{background:var(--success);color:#fff}
+    .badge.warning{background:var(--warning);color:#000}
+    .badge.danger{background:var(--danger);color:#fff}
+    input{padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);width:100%;max-width:360px}
+    input:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+    ol{margin-left:20px}
+    .loading{display:inline-flex;align-items:center;gap:8px}
+    .spinner{width:16px;height:16px;border:2px solid var(--border);border-top:2px solid var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .controls{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+    .question-display{background:rgba(37,99,235,0.1);border:1px solid var(--accent);border-radius:12px;padding:16px;margin-bottom:16px}
+    .countdown{font-size:18px;font-weight:600;color:var(--warning)}
+    .participant-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;margin-bottom:4px;background:rgba(0,0,0,0.2)}
+    .leaderboard-item{display:flex;justify-content:space-between;align-items:center;padding:12px;border-radius:8px;margin-bottom:8px;background:var(--panel);border:1px solid var(--border)}
+    .rank{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+    .rank.gold{background:#ffd700}
+    .rank.silver{background:#c0c0c0}
+    .rank.bronze{background:#cd7f32}
+    @media (max-width: 768px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>🎯 Quiz Admin Console</h1>
+        <p class="muted">Room: <strong id="room"></strong> • <span id="connectionStatus" class="badge">Connecting...</span></p>
+      </div>
+      <div class="controls">
+        <button id="next" class="btn btn-success">▶️ Next Question</button>
+        <button id="refreshData" class="btn btn-secondary">🔄 Refresh</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="participantCount">0</div>
+        <div class="stat-label">Active Participants</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="currentQuestionNum">0</div>
+        <div class="stat-label">Current Question</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="answersReceived">0</div>
+        <div class="stat-label">Answers Received</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="timeRemaining">--</div>
+        <div class="stat-label">Time Remaining</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h3>📝 Current Question</h3>
+          <div class="question-display" id="questionDisplay">
+            <div id="qtext">No question active</div>
+            <ol id="opts"></ol>
+          </div>
+          <div id="questionStatus" class="badge">Waiting for question...</div>
+          <div id="fastestAnswer" class="muted">—</div>
+        </div>
+
+        <div class="card">
+          <h3>🏆 Question Results</h3>
+          <div id="questionResults">
+            <p class="muted">Results will appear after each question</p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h3>👥 Participants (<span id="pcount">0</span>)</h3>
+          <input id="psearch" placeholder="Search participants..." style="margin-bottom:12px;">
+          <div id="plist" style="max-height:300px; overflow:auto;"></div>
+          <button id="reloadP" class="btn btn-secondary">Reload Participants</button>
+        </div>
+
+        <div class="card">
+          <h3>🏅 Leaderboard (Top 10)</h3>
+          <div id="winners"></div>
+          <button id="refreshWinners" class="btn btn-primary">Refresh Leaderboard</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const code = params.get('room');
+    document.getElementById('room').textContent = code;
+
+    let countdownTimer = null;
+    let currentQuestion = null;
+    let participantsData = [];
+    let isConnected = false;
+
+    // Connection status indicator
+    function updateConnectionStatus(status) {
+      const statusEl = document.getElementById('connectionStatus');
+      const statusMap = {
+        connected: { text: 'Connected', class: 'badge active' },
+        connecting: { text: 'Connecting...', class: 'badge warning' },
+        disconnected: { text: 'Disconnected', class: 'badge danger' }
+      };
+      const config = statusMap[status] || statusMap.connecting;
+      statusEl.textContent = config.text;
+      statusEl.className = config.class;
+      isConnected = status === 'connected';
+    }
+
+    function renderQuestion(q) {
+      const qtext = document.getElementById('qtext');
+      const ol = document.getElementById('opts');
+      const questionNum = document.getElementById('currentQuestionNum');
+      
+      if (!q) { 
+        qtext.textContent = 'Quiz completed! No more questions.';
+        ol.innerHTML = '';
+        questionNum.textContent = 'Done';
+        stopCountdown();
+        document.getElementById('questionStatus').textContent = 'Quiz Finished';
+        document.getElementById('questionStatus').className = 'badge';
+        return;
+      }
+      
+      currentQuestion = q;
+      qtext.textContent = q.text;
+      questionNum.textContent = (q.position || 0) + 1;
+      
+      ol.innerHTML = '';
+      (q.options || []).forEach((o, idx) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${o.text}</strong> <span class="muted">(${o.id})</span>`;
+        // Highlight correct answer for admin
+        if (o.id === q.correct_option_id) {
+          li.style.color = 'var(--success)';
+          li.innerHTML += ' ✓';
+        }
+        ol.appendChild(li);
+      });
+      
+      document.getElementById('questionStatus').textContent = 'Question Active';
+      document.getElementById('questionStatus').className = 'badge active';
+    }
+
+    function startCountdown(deadline) {
+      stopCountdown();
+      const timeEl = document.getElementById('timeRemaining');
+      const statusEl = document.getElementById('questionStatus');
+      
+      function tick() {
+        const remain = Math.max(0, deadline - Date.now());
+        const s = Math.ceil(remain / 1000);
+        timeEl.textContent = s > 0 ? `${s}s` : '0s';
+        
+        if (s > 0) {
+          statusEl.textContent = `Collecting answers... ${s}s`;
+          statusEl.className = 'badge warning';
+        } else {
+          statusEl.textContent = 'Time up - Processing...';
+          statusEl.className = 'badge danger';
+          stopCountdown();
+        }
+      }
+      
+      countdownTimer = setInterval(tick, 100);
+      tick();
+    }
+
+    function stopCountdown() {
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+      document.getElementById('timeRemaining').textContent = '--';
+    }
+
+    function renderResult(msg) {
+      const resultsDiv = document.getElementById('questionResults');
+      const leaderboard = msg.leaderboard || [];
+      
+      if (leaderboard.length === 0) {
+        resultsDiv.innerHTML = '<p class="muted">No correct answers for this question.</p>';
+      } else {
+        const first = leaderboard[0];
+        resultsDiv.innerHTML = `
+          <div style="margin-bottom:12px;">
+            <strong>🥇 Fastest Correct:</strong> ${first.name} 
+            <span class="muted">&lt;${first.email || 'no email'}&gt;</span>
+            <br><small class="muted">Response time: ${first.ms}ms</small>
+          </div>
+          <div><strong>Correct Answers:</strong> ${leaderboard.length}</div>
+        `;
+      }
+      
+      document.getElementById('questionStatus').textContent = 'Question Complete';
+      document.getElementById('questionStatus').className = 'badge';
+      
+      // Update stats
+      document.getElementById('answersReceived').textContent = leaderboard.length;
+    }
+
+    async function loadParticipants() {
+      try {
+        const res = await fetch(`/api/room/${code}/participants?limit=250`);
+        if (!res.ok) throw new Error('Failed to load participants');
+        
+        const { total, items } = await res.json();
+        participantsData = items || [];
+        
+        document.getElementById('pcount').textContent = total || 0;
+        document.getElementById('participantCount').textContent = total || 0;
+        renderParticipantList(participantsData);
+      } catch (error) {
+        console.error('Failed to load participants:', error);
+      }
+    }
+
+    function renderParticipantList(items) {
+      const list = document.getElementById('plist');
+      const query = (document.getElementById('psearch').value || '').toLowerCase();
+      const filtered = items.filter(p => 
+        (p.name || '').toLowerCase().includes(query) || 
+        (p.email || '').toLowerCase().includes(query)
+      );
+      
+      if (filtered.length === 0) {
+        list.innerHTML = '<p class="muted">No participants found.</p>';
+        return;
+      }
+      
+      list.innerHTML = filtered.map(p => `
+        <div class="participant-item">
+          <div>
+            <strong>${p.name || 'Anonymous'}</strong>
+            <br><small class="muted">${p.email || 'No email'}</small>
+          </div>
+          <div class="badge">${p.score || 0} pts</div>
+        </div>
+      `).join('');
+    }
+
+    async function refreshWinners() {
+      try {
+        const res = await fetch(`/api/room/${code}/winners`);
+        if (!res.ok) throw new Error('Failed to load winners');
+        
+        const arr = await res.json();
+        const ol = document.getElementById('winners');
+        
+        if (!arr || arr.length === 0) {
+          ol.innerHTML = '<p class="muted">No winners yet. Quiz hasn\'t started or no correct answers.</p>';
+          return;
+        }
+        
+        ol.innerHTML = arr.map((p, idx) => {
+          const rankClass = idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : '';
+          return `
+            <div class="leaderboard-item">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <div class="rank ${rankClass}">${idx + 1}</div>
+                <div>
+                  <strong>${p.name || 'Anonymous'}</strong>
+                  <br><small class="muted">${p.email || 'No email'}</small>
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:18px;font-weight:600;">${p.score || 0}</div>
+                <small class="muted">points</small>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (error) {
+        console.error('Failed to load winners:', error);
+      }
+    }
+
+    async function nextQuestion() {
+      const btn = document.getElementById('next');
+      btn.disabled = true;
+      btn.innerHTML = '<div class="loading"><div class="spinner"></div>Starting...</div>';
+      
+      try {
+        const res = await fetch('/api/room/' + code + '/next', { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to start next question');
+        
+        const q = await res.json();
+        renderQuestion(q);
+        
+        if (q) {
+          btn.textContent = '▶️ Next Question';
+        } else {
+          btn.textContent = '✅ Quiz Complete';
+        }
+      } catch (error) {
+        console.error('Failed to start next question:', error);
+        btn.textContent = '❌ Error - Try Again';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function refreshAllData() {
+      loadParticipants();
+      refreshWinners();
+    }
+
+    // WebSocket connection
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws/' + code);
+    
+    ws.addEventListener('open', () => {
+      updateConnectionStatus('connected');
+      ws.send(JSON.stringify({ type: 'register', isAdmin: true }));
+    });
+    
+    ws.addEventListener('close', () => {
+      updateConnectionStatus('disconnected');
+      // Try to reconnect after 2 seconds
+      setTimeout(() => {
+        location.reload();
+      }, 2000);
+    });
+    
+    ws.addEventListener('error', () => {
+      updateConnectionStatus('disconnected');
+    });
+    
+    ws.addEventListener('message', ev => {
+      try {
+        const msg = JSON.parse(ev.data);
+        
+        if (msg.type === 'question') {
+          renderQuestion(msg.question);
+          if (msg.deadline) {
+            startCountdown(msg.deadline);
+          }
+        }
+        
+        if (msg.type === 'result') {
+          stopCountdown();
+          renderResult(msg);
+        }
+        
+        if (msg.type === 'presence') {
+          document.getElementById('participantCount').textContent = msg.count || 0;
+        }
+      } catch (error) {
+        console.error('Error processing WebSocket message:', error);
+      }
+    });
+
+    // Event listeners
+    document.getElementById('next').addEventListener('click', nextQuestion);
+    document.getElementById('refreshWinners').addEventListener('click', refreshWinners);
+    document.getElementById('reloadP').addEventListener('click', loadParticipants);
+    document.getElementById('refreshData').addEventListener('click', refreshAllData);
+    document.getElementById('psearch').addEventListener('input', () => {
+      renderParticipantList(participantsData);
+    });
+
+    // Initial loads
+    loadParticipants();
+    refreshWinners();
+  </script>
+</body>
+</html>
+<body>
+  <div class="container">
+    <h1>Admin Console</h1>
+    <p class="muted">Room: <span id="room"></span></p>
+    <button id="next">Next Question</button>
+
+    <div class="card">
+      <h3>Current Question</h3>
+      <div id="qtext">—</div>
+      <ol id="opts"></ol>
+      <div id="lock" class="badge">Waiting…</div>
+      <div class="muted" id="first">—</div>
+    </div>
+
+    <div class="card">
+      <h3>Participants (<span id="pcount">0</span>)</h3>
+      <input id="psearch" placeholder="Search name/email" style="width:100%;max-width:360px;">
+      <ol id="plist" style="margin-top:10px; max-height:320px; overflow:auto;"></ol>
+      <button id="reloadP">Reload</button>
+    </div>
+
+    <div class="card">
+      <h3>Top 5 (overall)</h3>
+      <ol id="winners"></ol>
+      <button id="refreshWinners">Refresh Winners</button>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const code = params.get('room');
+    document.getElementById('room').textContent = code;
+
+    let countdownTimer = null;
+
+    function renderQuestion(q){
+      const qtext = document.getElementById('qtext');
+      const ol = document.getElementById('opts');
+      if(!q){ qtext.textContent = 'No more questions'; ol.innerHTML=''; stopCountdown(); return; }
+      qtext.textContent = q.text;
+      ol.innerHTML='';
+      (q.options||[]).forEach(o => {
+        const li = document.createElement('li'); li.textContent = o.text + ' ('+o.id+')'; ol.appendChild(li);
+      });
+    }
+
+    function startCountdown(deadline){
+      stopCountdown();
+      const lockEl = document.getElementById('lock');
+      function tick(){
+        const remain = Math.max(0, deadline - Date.now());
+        const s = Math.ceil(remain / 1000);
+        lockEl.textContent = s > 0 ? `Collecting answers… ${s}s` : 'Time up';
+        if (remain <= 0) stopCountdown();
+      }
+      countdownTimer = setInterval(tick, 200);
+      tick();
+    }
+    function stopCountdown(){
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    }
+
+    function renderResult(msg){
+      const first = msg.leaderboard?.[0];
+      document.getElementById('first').textContent = first
+        ? `Fastest correct: ${first.name} <${first.email}> — ${first.ms} ms`
+        : 'No correct answers';
+      // Optionally also list per-question ranking here; we keep Top5 card for overall points
+    }
+
+    async function loadParticipants() {
+      const res = await fetch(`/api/room/${code}/participants?limit=250`);
+      const { total, items } = await res.json();
+      document.getElementById('pcount').textContent = total;
+      renderParticipantList(items);
+    }
+    function renderParticipantList(items){
+      const list = document.getElementById('plist');
+      const q = (document.getElementById('psearch').value || '').toLowerCase();
+      const filtered = items.filter(p => (p.name||'').toLowerCase().includes(q) || (p.email||'').toLowerCase().includes(q));
+      list.innerHTML = '';
+      filtered.forEach(p => {
+        const li = document.createElement('li');
+        li.textContent = `${p.name||'Player'} <${p.email||''}> — ${p.score} pts`;
+        list.appendChild(li);
+      });
+    }
+
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss':'ws')+'://'+location.host+'/ws/'+code);
+    ws.addEventListener('open', ()=> ws.send(JSON.stringify({type:'register', isAdmin: true})));
+    ws.addEventListener('message', ev => {
+      const msg = JSON.parse(ev.data);
+      if(msg.type === 'question'){ renderQuestion(msg.question); if(msg.deadline){ startCountdown(msg.deadline); } }
+      if(msg.type === 'result'){ stopCountdown(); renderResult(msg); }
+      if(msg.type === 'presence'){ document.getElementById('pcount').textContent = msg.count; }
+    });
+
+    async function nextQuestion(){
+      const res = await fetch('/api/room/'+code+'/next', {method:'POST'});
+      const q = await res.json();
+      renderQuestion(q);
+    }
+    async function refreshWinners(){
+      const res = await fetch('/api/room/'+code+'/winners');
+      const arr = await res.json();
+      const ol = document.getElementById('winners'); ol.innerHTML='';
+      arr.forEach(p => {
+        const li = document.createElement('li');
+        li.textContent = `${p.name||'Player'} <${p.email||''}> — ${p.score} pts`;
+        ol.appendChild(li);
+      });
+    }
+
+    document.getElementById('next').addEventListener('click', nextQuestion);
+    document.getElementById('refreshWinners').addEventListener('click', refreshWinners);
+    document.getElementById('reloadP').addEventListener('click', loadParticipants);
+    document.getElementById('psearch').addEventListener('input', loadParticipants);
+
+    // Initial loads
+    loadParticipants();
+    refreshWinners();
+  </script>
+</body>
+</html>

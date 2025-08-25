@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Real-time Quiz Creator</title>
+  <style>
+    :root{
+      --bg:#0b1220; --panel:#111827; --card:#0f172a; --ink:#e5e7eb; --muted:#94a3b8;
+      --border:#374151; --accent:#2563eb; --success:#16a34a; --warning:#f59e0b; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);margin:0;line-height:1.5}
+    .container{max-width:1200px;margin:40px auto;padding:24px}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:24px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+    .tabs{display:flex;border-bottom:2px solid var(--border);margin-bottom:24px}
+    .tab{padding:12px 24px;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.3s}
+    .tab.active{border-bottom-color:var(--accent);color:var(--accent)}
+    .tab:hover{background:var(--card)}
+    .tab-content{display:none}
+    .tab-content.active{display:block}
+    .form-group{margin-bottom:20px}
+    .form-group label{display:block;margin-bottom:8px;font-weight:500}
+    .form-group input, .form-group textarea, .form-group select{
+      width:100%;padding:12px;border-radius:12px;border:1px solid var(--border);
+      background:var(--card);color:var(--ink);font-size:14px
+    }
+    .form-group input:focus, .form-group textarea:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+    .btn{padding:12px 20px;border-radius:12px;border:0;cursor:pointer;font-weight:500;transition:all 0.3s;display:inline-flex;align-items:center;gap:8px}
+    .btn-primary{background:var(--accent);color:#fff}
+    .btn-success{background:var(--success);color:#fff}
+    .btn-warning{background:var(--warning);color:#000}
+    .btn-danger{background:var(--danger);color:#fff}
+    .btn-secondary{background:var(--border);color:var(--ink)}
+    .btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
+    .btn:disabled{opacity:0.6;cursor:not-allowed;transform:none}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .question-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+    .question-header{display:flex;justify-content:between;align-items:center;margin-bottom:12px}
+    .question-title{font-weight:600;color:var(--accent)}
+    .option-list{margin-top:12px}
+    .option-item{display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;margin-bottom:8px;background:rgba(0,0,0,0.2)}
+    .option-item.correct{border-left:4px solid var(--success)}
+    .option-controls{display:flex;gap:8px;margin-top:12px}
+    .muted{color:var(--muted);font-size:14px}
+    .error{color:var(--danger);background:rgba(239,68,68,0.1);padding:12px;border-radius:8px;margin-top:12px}
+    .success{color:var(--success);background:rgba(22,163,74,0.1);padding:12px;border-radius:8px;margin-top:12px}
+    .loading{display:inline-flex;align-items:center;gap:8px}
+    .spinner{width:16px;height:16px;border:2px solid #374151;border-top:2px solid var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    canvas{background:var(--card);border-radius:12px;border:1px solid var(--border)}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+    .stat-card{background:var(--card);padding:16px;border-radius:12px;text-align:center}
+    .stat-value{font-size:24px;font-weight:700;color:var(--accent)}
+    .stat-label{font-size:14px;color:var(--muted)}
+    @media (max-width: 768px){.grid{grid-template-columns:1fr}.tabs{flex-wrap:wrap}}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>🎯 Real-time Quiz Creator</h1>
+    <p class="muted">Create engaging quizzes with real-time participant tracking and instant feedback.</p>
+    
+    <div class="stats" id="stats" style="display:none;">
+      <div class="stat-card">
+        <div class="stat-value" id="questionCount">0</div>
+        <div class="stat-label">Questions</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="totalOptions">0</div>
+        <div class="stat-label">Total Options</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="validQuestions">0</div>
+        <div class="stat-label">Valid Questions</div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="builder">Question Builder</div>
+      <div class="tab" data-tab="json">JSON Editor</div>
+      <div class="tab" data-tab="preview">Preview</div>
+    </div>
+
+    <!-- Question Builder Tab -->
+    <div class="tab-content active" id="builder">
+      <div class="card">
+        <h3>📝 Add New Question</h3>
+        <div class="form-group">
+          <label for="questionText">Question Text</label>
+          <textarea id="questionText" placeholder="Enter your question here..." rows="3"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label>Answer Options</label>
+          <div id="optionsContainer">
+            <div class="option-item">
+              <input type="text" placeholder="Option 1" class="option-input">
+              <label><input type="radio" name="correct" value="0"> Correct</label>
+              <button type="button" class="btn btn-danger btn-sm" onclick="removeOption(this)">×</button>
+            </div>
+            <div class="option-item">
+              <input type="text" placeholder="Option 2" class="option-input">
+              <label><input type="radio" name="correct" value="1"> Correct</label>
+              <button type="button" class="btn btn-danger btn-sm" onclick="removeOption(this)">×</button>
+            </div>
+          </div>
+          <div class="option-controls">
+            <button type="button" class="btn btn-secondary" onclick="addOption()">+ Add Option</button>
+          </div>
+        </div>
+        
+        <div style="display:flex;gap:12px;">
+          <button class="btn btn-primary" onclick="addQuestion()">✅ Add Question</button>
+          <button class="btn btn-secondary" onclick="clearForm()">🗑️ Clear</button>
+        </div>
+        
+        <div id="builderMessage"></div>
+      </div>
+
+      <div class="card">
+        <h3>📋 Questions List (<span id="questionsCount">0</span>)</h3>
+        <div id="questionsList"></div>
+        <div style="margin-top:16px;">
+          <button class="btn btn-success" onclick="createRoomFromBuilder()" id="createFromBuilder" disabled>
+            🚀 Create Quiz Room
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- JSON Editor Tab -->
+    <div class="tab-content" id="json">
+      <div class="card">
+        <h3>⚙️ JSON Editor</h3>
+        <p class="muted">Paste or edit questions in JSON format. Each question needs an id, text, correct_option_id, and 4 options.</p>
+        <textarea id="jsonEditor" rows="15"></textarea>
+        <div style="margin-top:12px;">
+          <button class="btn btn-primary" onclick="validateJSON()">✅ Validate JSON</button>
+          <button class="btn btn-success" onclick="createRoomFromJSON()" id="createFromJSON">🚀 Create Room</button>
+        </div>
+        <div id="jsonMessage"></div>
+      </div>
+    </div>
+
+    <!-- Preview Tab -->
+    <div class="tab-content" id="preview">
+      <div class="card">
+        <h3>👁️ Quiz Preview</h3>
+        <div id="previewContent"></div>
+      </div>
+    </div>
+
+    <!-- Room Creation Result -->
+    <div class="card" id="result" style="display:none;">
+      <h3>🎉 Quiz Room Created Successfully!</h3>
+      <div class="grid">
+        <div>
+          <h4>📊 Admin Console</h4>
+          <p><a id="adminLink" href="#" target="_blank" class="btn btn-primary">Open Admin Panel</a></p>
+          <p class="muted">Use this to control the quiz flow and monitor participants.</p>
+        </div>
+        <div>
+          <h4>👥 Player Join</h4>
+          <canvas id="qr" width="200" height="200"></canvas>
+          <p><a id="playerLink" href="#" target="_blank" class="btn btn-success">Join Quiz</a></p>
+          <p class="muted">Share this link or QR code with participants.</p>
+        </div>
+      </div>
+      <div class="success">
+        <strong>Room Code:</strong> <span id="roomCode"></span><br>
+        <strong>Admin URL:</strong> <span id="adminUrl"></span><br>
+        <strong>Player URL:</strong> <span id="playerUrl"></span>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Application State
+    let questions = [];
+    let nextQuestionId = 1;
+    let nextOptionId = 1;
+
+    // Sample data
+    const sampleQuestions = [
+      {"id":"q1","text":"Which animal is the fastest in a straight line dive?","correct_option_id":"o2","options":[
+        {"id":"o1","text":"Cheetah (120 km/h)"},
+        {"id":"o2","text":"Peregrine falcon (390 km/h)"},
+        {"id":"o3","text":"Sailfish (110 km/h)"},
+        {"id":"o4","text":"Pronghorn (98 km/h)"}]},
+      {"id":"q2","text":"What is 2 + 2?","correct_option_id":"o2","options":[
+        {"id":"o1","text":"3"},{"id":"o2","text":"4"},{"id":"o3","text":"22"},{"id":"o4","text":"5"}]}
+    ];
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+      initializeTabs();
+      updateJSONEditor();
+      updateStats();
+      updateCreateButton();
+    });
+
+    // Tab Management
+    function initializeTabs() {
+      document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+      });
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      
+      document.querySelector(`.tab[data-tab="${tabName}"]`).classList.add('active');
+      document.getElementById(tabName).classList.add('active');
+      
+      if (tabName === 'preview') updatePreview();
+      if (tabName === 'json') updateJSONEditor();
+    }
+
+    // Question Builder Functions
+    function addOption() {
+      const container = document.getElementById('optionsContainer');
+      const optionCount = container.children.length;
+      if (optionCount >= 6) {
+        showMessage('builderMessage', 'Maximum 6 options allowed per question.', 'warning');
+        return;
+      }
+
+      const optionDiv = document.createElement('div');
+      optionDiv.className = 'option-item';
+      optionDiv.innerHTML = `
+        <input type="text" placeholder="Option ${optionCount + 1}" class="option-input">
+        <label><input type="radio" name="correct" value="${optionCount}"> Correct</label>
+        <button type="button" class="btn btn-danger btn-sm" onclick="removeOption(this)">×</button>
+      `;
+      container.appendChild(optionDiv);
+    }
+
+    function removeOption(button) {
+      const container = document.getElementById('optionsContainer');
+      if (container.children.length <= 2) {
+        showMessage('builderMessage', 'Minimum 2 options required per question.', 'warning');
+        return;
+      }
+      button.parentElement.remove();
+      updateOptionNumbers();
+    }
+
+    function updateOptionNumbers() {
+      const options = document.querySelectorAll('#optionsContainer .option-item');
+      options.forEach((option, index) => {
+        const input = option.querySelector('.option-input');
+        const radio = option.querySelector('input[type="radio"]');
+        input.placeholder = `Option ${index + 1}`;
+        radio.value = index;
+      });
+    }
+
+    function addQuestion() {
+      const questionText = document.getElementById('questionText').value.trim();
+      const optionInputs = document.querySelectorAll('#optionsContainer .option-input');
+      const correctRadio = document.querySelector('input[name="correct"]:checked');
+
+      // Validation
+      if (!questionText) {
+        showMessage('builderMessage', 'Please enter a question text.', 'error');
+        return;
+      }
+
+      const options = Array.from(optionInputs).map(input => input.value.trim()).filter(text => text);
+      if (options.length < 2) {
+        showMessage('builderMessage', 'Please provide at least 2 options.', 'error');
+        return;
+      }
+
+      if (!correctRadio) {
+        showMessage('builderMessage', 'Please select the correct answer.', 'error');
+        return;
+      }
+
+      const correctIndex = parseInt(correctRadio.value);
+      if (correctIndex >= options.length || !options[correctIndex]) {
+        showMessage('builderMessage', 'Please ensure the correct answer option has text.', 'error');
+        return;
+      }
+
+      // Create question object
+      const question = {
+        id: `q${nextQuestionId++}`,
+        text: questionText,
+        correct_option_id: `o${correctIndex + 1}`,
+        options: options.map((text, index) => ({
+          id: `o${index + 1}`,
+          text: text
+        }))
+      };
+
+      questions.push(question);
+      updateQuestionsList();
+      updateStats();
+      updateJSONEditor();
+      updateCreateButton();
+      clearForm();
+      showMessage('builderMessage', 'Question added successfully!', 'success');
+    }
+
+    function clearForm() {
+      document.getElementById('questionText').value = '';
+      const container = document.getElementById('optionsContainer');
+      container.innerHTML = `
+        <div class="option-item">
+          <input type="text" placeholder="Option 1" class="option-input">
+          <label><input type="radio" name="correct" value="0"> Correct</label>
+          <button type="button" class="btn btn-danger btn-sm" onclick="removeOption(this)">×</button>
+        </div>
+        <div class="option-item">
+          <input type="text" placeholder="Option 2" class="option-input">
+          <label><input type="radio" name="correct" value="1"> Correct</label>
+          <button type="button" class="btn btn-danger btn-sm" onclick="removeOption(this)">×</button>
+        </div>
+      `;
+    }
+
+    function updateQuestionsList() {
+      const container = document.getElementById('questionsList');
+      const count = document.getElementById('questionsCount');
+      
+      count.textContent = questions.length;
+      
+      if (questions.length === 0) {
+        container.innerHTML = '<p class="muted">No questions added yet. Use the form above to add questions.</p>';
+        return;
+      }
+
+      container.innerHTML = questions.map((q, index) => `
+        <div class="question-card">
+          <div class="question-header">
+            <span class="question-title">Question ${index + 1}</span>
+            <button class="btn btn-danger btn-sm" onclick="removeQuestion(${index})">Delete</button>
+          </div>
+          <div><strong>${q.text}</strong></div>
+          <div class="option-list">
+            ${q.options.map(opt => `
+              <div class="option-item ${opt.id === q.correct_option_id ? 'correct' : ''}">
+                ${opt.text} ${opt.id === q.correct_option_id ? '✓' : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function removeQuestion(index) {
+      if (confirm('Are you sure you want to delete this question?')) {
+        questions.splice(index, 1);
+        updateQuestionsList();
+        updateStats();
+        updateJSONEditor();
+        updateCreateButton();
+      }
+    }
+
+    // JSON Editor Functions
+    function updateJSONEditor() {
+      document.getElementById('jsonEditor').value = JSON.stringify(questions.length > 0 ? questions : sampleQuestions, null, 2);
+    }
+
+    function validateJSON() {
+      try {
+        const jsonText = document.getElementById('jsonEditor').value;
+        const parsed = JSON.parse(jsonText);
+        
+        if (!Array.isArray(parsed)) {
+          throw new Error('JSON must be an array of questions');
+        }
+
+        const validation = validateQuestions(parsed);
+        if (validation.errors.length > 0) {
+          showMessage('jsonMessage', `Validation errors:\n${validation.errors.join('\n')}`, 'error');
+        } else {
+          showMessage('jsonMessage', `Valid! ${validation.valid} questions ready to use.`, 'success');
+        }
+      } catch (error) {
+        showMessage('jsonMessage', `Invalid JSON: ${error.message}`, 'error');
+      }
+    }
+
+    function validateQuestions(questions) {
+      const errors = [];
+      let valid = 0;
+
+      questions.forEach((q, index) => {
+        if (!q.id) errors.push(`Question ${index + 1}: Missing id`);
+        if (!q.text) errors.push(`Question ${index + 1}: Missing text`);
+        if (!q.correct_option_id) errors.push(`Question ${index + 1}: Missing correct_option_id`);
+        if (!Array.isArray(q.options)) errors.push(`Question ${index + 1}: Missing or invalid options array`);
+        else {
+          if (q.options.length < 2) errors.push(`Question ${index + 1}: Need at least 2 options`);
+          const correctExists = q.options.some(opt => opt.id === q.correct_option_id);
+          if (!correctExists) errors.push(`Question ${index + 1}: correct_option_id not found in options`);
+        }
+        
+        if (errors.length === 0 || errors.filter(e => e.includes(`Question ${index + 1}`)).length === 0) {
+          valid++;
+        }
+      });
+
+      return { errors, valid };
+    }
+
+    // Preview Functions
+    function updatePreview() {
+      const container = document.getElementById('previewContent');
+      const questionsToPreview = questions.length > 0 ? questions : sampleQuestions;
+      
+      if (questionsToPreview.length === 0) {
+        container.innerHTML = '<p class="muted">No questions to preview.</p>';
+        return;
+      }
+
+      container.innerHTML = questionsToPreview.map((q, index) => `
+        <div class="question-card">
+          <h4>Question ${index + 1}</h4>
+          <p><strong>${q.text}</strong></p>
+          <div class="option-list">
+            ${q.options.map(opt => `
+              <div class="option-item ${opt.id === q.correct_option_id ? 'correct' : ''}">
+                ${opt.text} ${opt.id === q.correct_option_id ? '<span style="color:var(--success)">✓ Correct Answer</span>' : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // Statistics
+    function updateStats() {
+      const questionCount = questions.length;
+      const totalOptions = questions.reduce((sum, q) => sum + q.options.length, 0);
+      const validation = validateQuestions(questions);
+      
+      document.getElementById('questionCount').textContent = questionCount;
+      document.getElementById('totalOptions').textContent = totalOptions;
+      document.getElementById('validQuestions').textContent = validation.valid;
+      
+      document.getElementById('stats').style.display = questionCount > 0 ? 'grid' : 'none';
+    }
+
+    function updateCreateButton() {
+      const hasQuestions = questions.length > 0;
+      document.getElementById('createFromBuilder').disabled = !hasQuestions;
+    }
+
+    // Room Creation
+    async function createRoomFromBuilder() {
+      if (questions.length === 0) {
+        showMessage('builderMessage', 'Please add at least one question.', 'error');
+        return;
+      }
+      await createRoom(questions, 'builderMessage');
+    }
+
+    async function createRoomFromJSON() {
+      try {
+        const jsonText = document.getElementById('jsonEditor').value;
+        const parsed = JSON.parse(jsonText);
+        await createRoom(parsed, 'jsonMessage');
+      } catch (error) {
+        showMessage('jsonMessage', `Invalid JSON: ${error.message}`, 'error');
+      }
+    }
+
+    async function createRoom(questionsData, messageElementId) {
+      const validation = validateQuestions(questionsData);
+      if (validation.errors.length > 0) {
+        showMessage(messageElementId, `Please fix validation errors first:\n${validation.errors.join('\n')}`, 'error');
+        return;
+      }
+
+      try {
+        showMessage(messageElementId, '<div class="loading"><div class="spinner"></div>Creating room...</div>', 'success');
+        
+        const res = await fetch('/api/room', { 
+          method: 'POST', 
+          headers: {'content-type': 'application/json'}, 
+          body: JSON.stringify(questionsData) 
+        });
+        
+        if (!res.ok) {
+          throw new Error(`Failed to create room: ${res.status}`);
+        }
+        
+        const { code } = await res.json();
+        showRoomResult(code);
+        showMessage(messageElementId, 'Room created successfully!', 'success');
+      } catch (error) {
+        showMessage(messageElementId, `Failed to create room: ${error.message}`, 'error');
+      }
+    }
+
+    function showRoomResult(code) {
+      const adminUrl = `/admin.html?room=${code}`;
+      const playerUrl = `/play.html?room=${code}`;
+      
+      document.getElementById('roomCode').textContent = code;
+      document.getElementById('adminUrl').textContent = location.origin + adminUrl;
+      document.getElementById('playerUrl').textContent = location.origin + playerUrl;
+      document.getElementById('adminLink').href = adminUrl;
+      document.getElementById('playerLink').href = playerUrl;
+      document.getElementById('result').style.display = 'block';
+      
+      QRCode.toCanvas(document.getElementById('qr'), location.origin + playerUrl, {
+        width: 200,
+        margin: 2,
+        color: {
+          dark: '#2563eb',
+          light: '#ffffff'
+        }
+      });
+      
+      // Scroll to result
+      document.getElementById('result').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Utility Functions
+    function showMessage(elementId, message, type = 'info') {
+      const element = document.getElementById(elementId);
+      element.innerHTML = `<div class="${type}">${message}</div>`;
+      setTimeout(() => element.innerHTML = '', type === 'success' ? 3000 : 5000);
+    }
+  </script>
+</body>
+</html>

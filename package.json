@@ -1,0 +1,16 @@
+{
+  "name": "realtime-quiz-worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "migrate:local": "wrangler d1 migrations apply QUIZ_DB --local",
+    "migrate": "wrangler d1 migrations apply QUIZ_DB"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240712.0",
+    "typescript": "^5.5.4"
+  }
+}

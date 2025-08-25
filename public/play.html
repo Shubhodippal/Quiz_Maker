@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Join Quiz</title>
+  <style>
+    :root{
+      --bg:#0b1220; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8;
+      --border:#1f2937; --accent:#16a34a; --accent-ink:#062b12; --primary:#2563eb;
+      --danger:#ef4444; --warn:#f59e0b; --success:#16a34a;
+    }
+    /* layout */
+    *{box-sizing:border-box}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);margin:0}
+    .wrap{max-width:960px;margin:24px auto;padding:16px}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    h1,h2,h3{margin:0 0 12px 0}
+    .muted{color:var(--muted)}
+    /* inputs/buttons */
+    input{padding:12px;border-radius:12px;border:1px solid var(--border);background:#0b1426;color:var(--ink)}
+    input:focus{outline:2px solid #3352d1;border-color:#3352d1}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{padding:12px 16px;border-radius:12px;border:0;cursor:pointer;color:#fff;background:var(--accent)}
+    .btn.primary{background:var(--primary)}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    /* option cards */
+    .opts{display:grid;gap:12px;margin-top:10px}
+    .opt{
+      position:relative;background:#0c152b;border:1px solid var(--border);
+      border-radius:14px;padding:14px 16px;cursor:pointer;transition:transform .05s ease, border-color .15s ease, background .15s ease;
+      user-select:none;
+    }
+    .opt:hover{transform:translateY(-1px);border-color:#284e9e}
+    .opt.disabled{opacity:.55;pointer-events:none}
+    .opt .bullet{
+      width:18px;height:18px;border-radius:50%;border:2px solid #2a3a64;display:inline-flex;align-items:center;justify-content:center;margin-right:10px;flex:0 0 18px;
+    }
+    .opt .text{flex:1}
+    .opt.picked{border-color:var(--accent);background:#0d1f16}
+    .opt.picked .bullet{border-color:var(--accent);background:var(--accent)}
+    .opt.correct{outline:2px solid var(--accent)}
+    .opt.incorrect{outline:2px solid var(--danger)}
+    .opt-row{display:flex;align-items:center;gap:10px}
+    /* header/status */
+    .header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#0b1526;border:1px solid var(--border);color:var(--muted);font-size:13px}
+    .progress{position:relative;height:8px;background:#0b1526;border:1px solid var(--border);border-radius:999px;overflow:hidden;margin-top:10px}
+    .bar{position:absolute;left:0;top:0;bottom:0;width:0%;background:linear-gradient(90deg,#3b82f6,#22c55e)}
+    /* toast */
+    .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111827;color:#e5e7eb;border:1px solid var(--border);border-radius:12px;padding:10px 14px;opacity:0;pointer-events:none;transition:opacity .2s ease}
+    .toast.show{opacity:1}
+    .toast.success{background:#0f2815;border-color:var(--success);color:var(--success)}
+    .toast.error{background:#2d1b1b;border-color:var(--danger);color:var(--danger)}
+    /* connection status */
+    .status-indicator{display:inline-flex;align-items:center;gap:6px}
+    .status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+    .status-dot.connected{background:var(--success)}
+    .status-dot.connecting{background:var(--warn);animation:pulse 1s infinite}
+    .status-dot.disconnected{background:var(--danger)}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+    /* responsive option grid */
+    @media (min-width:680px){ .opts{grid-template-columns:1fr 1fr} }
+    /* session restoration banner */
+    .session-banner{background:#0d1f16;border:1px solid var(--success);border-radius:12px;padding:12px;margin-bottom:16px;display:flex;align-items:center;gap:12px}
+    .session-banner .icon{color:var(--success);font-size:18px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="register">
+      <h1>🎯 Join the Quiz</h1>
+      <p class="muted">Room code: <span id="room"></span></p>
+      <div class="row" style="margin:10px 0 12px">
+        <input id="name" placeholder="Your name *" style="flex:1 1 220px" required>
+        <input id="email" placeholder="Email (optional)" style="flex:1 1 220px" type="email">
+        <input id="phone" placeholder="Phone (optional)" style="flex:1 1 180px" type="tel">
+      </div>
+      <button class="btn primary" id="join">Join Room</button>
+      <p class="muted" style="margin-top:12px;font-size:13px;">
+        💡 Your session will be saved - you can refresh the page without losing your progress.
+      </p>
+    </div>
+
+    <div class="card" id="game" style="display:none;">
+      <div id="sessionBanner" class="session-banner" style="display:none;">
+        <div class="icon">🔄</div>
+        <div>
+          <div style="font-weight:500;">Session Restored</div>
+          <div class="muted" style="font-size:13px;">Welcome back! You've been reconnected to the quiz.</div>
+        </div>
+      </div>
+
+      <div class="header">
+        <div class="muted">
+          Player: <strong id="playerName"></strong> · 
+          <span class="badge"><span id="playerId"></span></span>
+        </div>
+        <div class="badge status-indicator" id="status">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">Waiting…</span>
+        </div>
+      </div>
+
+      <h2 id="qtext">Waiting for next question…</h2>
+      <div class="progress"><div class="bar" id="pbar"></div></div>
+
+      <div class="opts" id="opts"></div>
+
+      <div class="muted" id="note" style="margin-top:10px;">Pick one option before time's up. You'll see what you chose highlighted.</div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('room');
+  document.getElementById('room').textContent = code || '—';
+
+  // Persistent storage keys
+  const STORAGE_KEYS = {
+    player: `quiz_player_${code}`,
+    session: `quiz_session_${code}`
+  };
+
+  // state
+  let player = null;
+  let ws = null;
+  let pingInterval = null;      // keep-alive ping timer
+  let chosenId = null;          // selected option id (prefixed)
+  let deadline = 0;
+  let timer = null;
+  let reconnectAttempts = 0;
+  const maxReconnectAttempts = 5;
+
+  // elements
+  const $reg = document.getElementById('register');
+  const $game = document.getElementById('game');
+  const $sessionBanner = document.getElementById('sessionBanner');
+  const $playerName = document.getElementById('playerName');
+  const $playerId = document.getElementById('playerId');
+  const $status = document.getElementById('status');
+  const $statusText = document.getElementById('statusText');
+  const $statusDot = document.getElementById('statusDot');
+  const $qtext = document.getElementById('qtext');
+  const $opts = document.getElementById('opts');
+  const $pbar = document.getElementById('pbar');
+  const $note = document.getElementById('note');
+  const $toast = document.getElementById('toast');
+
+  // Check for existing session on page load
+  function checkExistingSession() {
+    try {
+      const savedPlayer = localStorage.getItem(STORAGE_KEYS.player);
+      const savedSession = localStorage.getItem(STORAGE_KEYS.session);
+      
+      if (savedPlayer && savedSession) {
+        const playerData = JSON.parse(savedPlayer);
+        const sessionData = JSON.parse(savedSession);
+        
+        // Check if session is still valid (within 24 hours)
+        const sessionAge = Date.now() - sessionData.timestamp;
+        const maxSessionAge = 24 * 60 * 60 * 1000; // 24 hours
+        
+        if (sessionAge < maxSessionAge && playerData.room_code === code) {
+          player = playerData;
+          showGameInterface(true);
+          ensureSocket(() => {
+            ws.send(JSON.stringify({
+              type: 'register',
+              playerId: player.id,
+              player: { id: player.id, name: player.name, email: player.email },
+              reconnect: true
+            }));
+          });
+          toast('Reconnected to your session', 2000, 'success');
+          return true;
+        } else {
+          // Clean up expired session
+          clearStoredSession();
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to restore session:', error);
+      clearStoredSession();
+    }
+    return false;
+  }
+
+  function saveSession(playerData) {
+    try {
+      playerData.room_code = code;
+      localStorage.setItem(STORAGE_KEYS.player, JSON.stringify(playerData));
+      localStorage.setItem(STORAGE_KEYS.session, JSON.stringify({
+        timestamp: Date.now(),
+        room_code: code
+      }));
+    } catch (error) {
+      console.warn('Failed to save session:', error);
+    }
+  }
+
+  function clearStoredSession() {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.player);
+      localStorage.removeItem(STORAGE_KEYS.session);
+    } catch (error) {
+      console.warn('Failed to clear session:', error);
+    }
+  }
+
+  function showGameInterface(isRestore = false) {
+    $reg.style.display = 'none';
+    $game.style.display = 'block';
+    $playerName.textContent = player.name || 'Player';
+    $playerId.textContent = (player.id || '').slice(0, 6);
+    
+    if (isRestore) {
+      $sessionBanner.style.display = 'flex';
+      setTimeout(() => {
+        $sessionBanner.style.display = 'none';
+      }, 5000);
+    }
+  }
+
+  function updateConnectionStatus(status) {
+    const statusMap = {
+      connected: { text: 'Connected', class: 'connected' },
+      connecting: { text: 'Connecting...', class: 'connecting' },
+      disconnected: { text: 'Disconnected', class: 'disconnected' },
+      ready: { text: 'Ready', class: 'connected' },
+      waiting: { text: 'Waiting…', class: 'connected' }
+    };
+    
+    const config = statusMap[status] || statusMap.waiting;
+    $statusText.textContent = config.text;
+    $statusDot.className = `status-dot ${config.class}`;
+  }
+
+  function toast(msg, ms = 1400, type = 'info') {
+    $toast.textContent = msg;
+    $toast.className = `toast ${type}`;
+    $toast.classList.add('show');
+    setTimeout(() => $toast.classList.remove('show'), ms);
+  }
+
+  function setDisabled(dis) {
+    document.querySelectorAll('.opt').forEach(el => {
+      if (dis) el.classList.add('disabled'); else el.classList.remove('disabled');
+    });
+  }
+
+  function percentageLeft() {
+    const total = Math.max(0, deadline - (deadline - 25_000)); // 25s window
+    const remain = Math.max(0, deadline - Date.now());
+    return total ? Math.max(0, Math.min(100, Math.round((remain / 25_000) * 100))) : 0;
+  }
+
+  function startCountdown(dl) {
+    stopCountdown();
+    deadline = dl;
+    tick(); // initial
+    timer = setInterval(tick, 150);
+    function tick() {
+      const now = Date.now();
+      const remain = Math.max(0, dl - now);
+      const secs = Math.ceil(remain / 1000);
+      $statusText.textContent = remain > 0 ? `Time left: ${secs}s` : 'Time up';
+      $pbar.style.width = `${percentageLeft()}%`;
+      if (remain <= 0) {
+        setDisabled(true);
+        stopCountdown();
+      }
+    }
+  }
+
+  function stopCountdown() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function clearOptions() {
+    $opts.innerHTML = '';
+    chosenId = null;
+    setDisabled(false);
+  }
+
+  function renderQuestion(q, dl) {
+    clearOptions();
+    if (!q) {
+      $qtext.textContent = 'Quiz over! 🎉';
+      updateConnectionStatus('ready');
+      $note.textContent = 'Thanks for playing. Your session has been saved.';
+      $pbar.style.width = '0%';
+      return;
+    }
+    $qtext.textContent = q.text;
+    $note.textContent = 'Tap once to choose. You can\'t change after submitting.';
+    (q.options || []).forEach((o, idx) => {
+      const el = document.createElement('div');
+      el.className = 'opt';
+      el.dataset.oid = o.id;
+
+      const row = document.createElement('div');
+      row.className = 'opt-row';
+
+      const bullet = document.createElement('div');
+      bullet.className = 'bullet';
+      bullet.innerHTML = ''; // filled when picked
+
+      const text = document.createElement('div');
+      text.className = 'text';
+      text.textContent = o.text;
+
+      row.appendChild(bullet);
+      row.appendChild(text);
+      el.appendChild(row);
+
+      el.onclick = () => {
+        if (!player || chosenId) return;
+        chosenId = o.id;
+        markPicked(chosenId);
+        sendAnswer(chosenId);
+        toast('Answer submitted', 1400, 'success');
+        setDisabled(true);
+      };
+      $opts.appendChild(el);
+    });
+    if (dl) startCountdown(dl);
+  }
+
+  function markPicked(id) {
+    document.querySelectorAll('.opt').forEach(el => {
+      el.classList.toggle('picked', el.dataset.oid === id);
+      const b = el.querySelector('.bullet');
+      if (!b) return;
+      if (el.dataset.oid === id) {
+        b.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#0b1220" xmlns="http://www.w3.org/2000/svg"><path d="M20.285 6.709a1 1 0 0 1 0 1.414l-10.01 10.01a1 1 0 0 1-1.414 0L3.715 12.99a1 1 0 0 1 1.414-1.414l4.025 4.025 9.303-9.303a1 1 0 0 1 1.828.411z"/></svg>';
+      } else {
+        b.innerHTML = '';
+      }
+    });
+  }
+
+  async function join() {
+    const name = document.getElementById('name').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const phone = document.getElementById('phone').value.trim();
+
+    const body = { name, email, phone };
+    if (!body.name) { 
+      toast('Please enter your name', 2000, 'error'); 
+      document.getElementById('name').focus();
+      return; 
+    }
+
+    const joinBtn = document.getElementById('join');
+    joinBtn.disabled = true;
+    joinBtn.textContent = 'Joining...';
+
+    try {
+      // register via REST
+      const res = await fetch('/api/room/' + code + '/register', {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(body)
+      });
+      
+      if (!res.ok) { 
+        const errorText = await res.text();
+        toast(`Join failed: ${errorText || 'Unknown error'}`, 3000, 'error'); 
+        return; 
+      }
+      
+      player = await res.json();
+      
+      // Save session for persistence
+      saveSession(player);
+      
+      // show game UI
+      showGameInterface(false);
+
+      // connect / or if already connected, send identity
+      ensureSocket(() => {
+        ws.send(JSON.stringify({
+          type: 'register',
+          playerId: player.id,
+          player: { id: player.id, name: player.name, email: player.email }
+        }));
+      });
+      
+      toast('Successfully joined the quiz!', 2000, 'success');
+    } catch (error) {
+      toast(`Connection error: ${error.message}`, 3000, 'error');
+    } finally {
+      joinBtn.disabled = false;
+      joinBtn.textContent = 'Join Room';
+    }
+  }
+
+  function ensureSocket(onOpen) {
+    if (ws && ws.readyState === WebSocket.OPEN) { 
+      onOpen && onOpen(); 
+      return; 
+    }
+    
+    updateConnectionStatus('connecting');
+    
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${protocol}://${location.host}/ws/${code}`;
+    
+    ws = new WebSocket(url);
+    
+    // Clear any existing ping interval
+    if (pingInterval) {
+      clearInterval(pingInterval);
+      pingInterval = null;
+    }
+    
+    ws.addEventListener('open', () => {
+      reconnectAttempts = 0;
+      updateConnectionStatus('connected');
+      
+      // Set up keep-alive ping every 30 seconds
+      pingInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
+      
+      // initial lightweight register (some gateways need a first frame)
+      ws.send(JSON.stringify({ type: 'register' }));
+      onOpen && onOpen();
+    });
+    
+    ws.addEventListener('message', (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        handleWebSocketMessage(msg);
+      } catch (error) {
+        console.warn('Failed to parse message:', error);
+      }
+    });
+    
+    ws.addEventListener('close', (ev) => {
+      updateConnectionStatus('disconnected');
+      
+      // Clear ping interval on close
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+      
+      // Exponential backoff for reconnection
+      if (reconnectAttempts < maxReconnectAttempts) {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+        setTimeout(() => {
+          reconnectAttempts++;
+          ensureSocket(onOpen);
+        }, delay);
+      } else {
+        updateConnectionStatus('disconnected');
+        toast('Connection lost. Please refresh the page.', 5000, 'error');
+      }
+    });
+    
+    ws.addEventListener('error', (ev) => {
+      console.warn('WebSocket error:', ev);
+      updateConnectionStatus('disconnected');
+    });
+  }
+
+  function handleWebSocketMessage(msg) {
+    switch (msg.type) {
+      case 'question':
+        renderQuestion(msg.question, msg.deadline);
+        break;
+      case 'status':
+        if (msg.message) toast(msg.message);
+        break;
+      case 'error':
+        if (msg.message) toast(msg.message, 3000, 'error');
+        break;
+      case 'pong':
+        // Keep-alive response - connection is healthy
+        break;
+      case 'result':
+        // optional feedback: show a subtle marker on your pick
+        if (chosenId) {
+          // highlight my pick as correct/incorrect
+          const mine = document.querySelector(`.opt[data-oid="${chosenId}"]`);
+          if (mine) {
+            mine.classList.add(chosenId === msg.correct_option_id ? 'correct' : 'incorrect');
+          }
+        }
+        updateConnectionStatus('ready');
+        stopCountdown();
+        break;
+      case 'registered':
+        if (msg.ok && player) {
+          updateConnectionStatus('ready');
+        }
+        break;
+      case 'accepted':
+        // Answer was accepted
+        break;
+      case 'error':
+        toast(`Error: ${msg.message}`, 3000, 'error');
+        break;
+    }
+  }
+
+  function sendAnswer(optionId) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { 
+      toast('Connection lost - trying to reconnect...', 2000, 'error'); 
+      ensureSocket(() => sendAnswer(optionId));
+      return; 
+    }
+    ws.send(JSON.stringify({ type: 'answer', playerId: player.id, optionId }));
+  }
+
+  // Wire up join button
+  document.getElementById('join').addEventListener('click', join);
+
+  // Allow Enter key to join
+  ['name', 'email', 'phone'].forEach(id => {
+    document.getElementById(id).addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') join();
+    });
+  });
+
+  // Handle page visibility changes (user switches tabs/apps)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && player && ws && ws.readyState !== WebSocket.OPEN) {
+      // Page became visible and we have a player but no connection
+      ensureSocket(() => {
+        ws.send(JSON.stringify({
+          type: 'register',
+          playerId: player.id,
+          player: { id: player.id, name: player.name, email: player.email },
+          reconnect: true
+        }));
+      });
+    }
+  });
+
+  // Handle page unload (save state)
+  window.addEventListener('beforeunload', () => {
+    if (player) {
+      // Update session timestamp on page unload
+      saveSession(player);
+    }
+  });
+
+  // Initialize - check for existing session or prep socket
+  if (code) {
+    if (!checkExistingSession()) {
+      // No existing session, prepare socket for when user joins
+      ensureSocket();
+    }
+  } else {
+    // No room code provided
+    document.getElementById('room').textContent = 'No room code provided';
+    document.getElementById('join').disabled = true;
+    toast('Invalid room code. Please check your link.', 5000, 'error');
+  }
+})();
+</script>
+</body>
+</html>

@@ -386,14 +386,14 @@ ws.send(JSON.stringify({type: "ping"}));
 - **Bulk Import**: JSON format for batch question creation
 - **Preview Mode**: Test questions before room creation
 
-### Player Interface (`/play.html`)
+### Player Interface (`/play_sse.html`)
 - **Room Join**: Enter code and player information
 - **Real-time Questions**: Live question display with countdown
 - **Answer Selection**: Touch-friendly option buttons
 - **Results Display**: Instant feedback and leaderboard
 - **Responsive Design**: Mobile-optimized layout
 
-### Admin Console (`/admin.html`)
+### Admin Console (`/admin_sse.html`)
 - **Live Statistics**: Connected players, question progress
 - **Participant Management**: Real-time player list with pagination
 - **Quiz Control**: Next question, session management
@@ -551,12 +551,12 @@ For issues and questions:
    - Click "Create Room" and note the 5-character code
 
 2. **Join as Player**:
-   - Visit `/play.html?code=YOUR_CODE`
+   - Visit `/play_sse.html?code=YOUR_CODE`
    - Enter player information
    - Wait for questions to start
 
 3. **Admin Control**:
-   - Visit `/admin.html?code=YOUR_CODE`
+   - Visit `/admin_sse.html?code=YOUR_CODE`
    - Monitor live participants
    - Start questions with "Next Question" button
 

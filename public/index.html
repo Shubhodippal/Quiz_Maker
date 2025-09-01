@@ -500,8 +500,8 @@
     }
 
     function showRoomResult(code) {
-      const adminUrl = `/admin.html?room=${code}`;
-      const playerUrl = `/play.html?room=${code}`;
+      const adminUrl = `/admin_sse.html?room=${code}`;
+      const playerUrl = `/play_sse.html?room=${code}`;
       
       document.getElementById('roomCode').textContent = code;
       document.getElementById('adminUrl').textContent = location.origin + adminUrl;

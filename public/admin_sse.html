@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Quiz Admin Console (SSE)</title>
+  <style>
+    :root{
+      --bg:#0b1220; --panel:#111827; --card:#0f172a; --ink:#e5e7eb; --muted:#94a3b8;
+      --border:#374151; --accent:#2563eb; --success:#16a34a; --warning:#f59e0b; --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);margin:0;line-height:1.5}
+    .container{max-width:1400px;margin:24px auto;background:var(--panel);padding:24px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+    .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+    .stat-card{background:var(--card);padding:16px;border-radius:12px;text-align:center;border:1px solid var(--border)}
+    .stat-value{font-size:24px;font-weight:700;color:var(--accent)}
+    .stat-label{font-size:14px;color:var(--muted)}
+    .btn{padding:12px 20px;border-radius:12px;border:0;cursor:pointer;font-weight:500;transition:all 0.3s;display:inline-flex;align-items:center;gap:8px}
+    .btn-primary{background:var(--accent);color:#fff}
+    .btn-success{background:var(--success);color:#fff}
+    .btn-warning{background:var(--warning);color:#000}
+    .btn-danger{background:var(--danger);color:#fff}
+    .btn-secondary{background:var(--border);color:var(--ink)}
+    .btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.3)}
+    .btn:disabled{opacity:0.6;cursor:not-allowed;transform:none}
+    .card{background:var(--card);padding:20px;border-radius:12px;margin-bottom:16px;border:1px solid var(--border)}
+    .muted{color:var(--muted)}
+    .badge{display:inline-block;padding:6px 12px;border-radius:999px;background:var(--border);margin-right:6px;font-size:13px}
+    .badge.active{background:var(--success);color:#fff}
+    .badge.warning{background:var(--warning);color:#000}
+    .badge.danger{background:var(--danger);color:#fff}
+    input{padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--ink);width:100%;max-width:360px}
+    input:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+    ol{margin-left:20px}
+    .loading{display:inline-flex;align-items:center;gap:8px}
+    .spinner{width:16px;height:16px;border:2px solid var(--border);border-top:2px solid var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+    .grid{display:grid;grid-template-columns:2fr 1fr;gap:20px}
+    .questions-container{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+    .question-card{margin-bottom:0}
+    .controls{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+    .question-display{background:rgba(37,99,235,0.1);border:1px solid var(--accent);border-radius:12px;padding:16px;margin-bottom:16px}
+    .next-question-preview{background:rgba(245,158,11,0.1);border:1px solid var(--warning);border-radius:12px;padding:16px}
+    .countdown{font-size:18px;font-weight:600;color:var(--warning)}
+    .participant-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;margin-bottom:4px;background:rgba(0,0,0,0.2)}
+    .leaderboard-item{display:flex;justify-content:space-between;align-items:center;padding:12px;border-radius:8px;margin-bottom:8px;background:var(--panel);border:1px solid var(--border)}
+    .rank{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+    .rank.gold{background:#ffd700;color:#000}
+    .rank.silver{background:#c0c0c0;color:#000}
+    .rank.bronze{background:#cd7f32;color:#000}
+    .leaderboard-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .leaderboard-card{background:linear-gradient(135deg, var(--card) 0%, rgba(37,99,235,0.1) 100%);border:1px solid var(--accent)}
+    @media (max-width: 768px){
+      .grid{grid-template-columns:1fr}
+      .stats{grid-template-columns:1fr 1fr}
+      .questions-container{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>🎯 Quiz Admin Console (SSE)</h1>
+        <p class="muted">Room: <strong id="room"></strong> • <span id="connectionStatus" class="badge">Connecting...</span></p>
+      </div>
+      <div class="controls">
+        <button id="next" class="btn btn-success">▶️ Next Question</button>
+        <button id="refreshData" class="btn btn-secondary">🔄 Refresh</button>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value" id="participantCount">0</div>
+        <div class="stat-label">Active Participants</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="currentQuestionNum">0</div>
+        <div class="stat-label">Current Question</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="answersReceived">0</div>
+        <div class="stat-label">Answers Received</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="timeRemaining">--</div>
+        <div class="stat-label">Time Remaining</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <!-- Side-by-side question layout -->
+        <div class="questions-container">
+          <div class="card question-card">
+            <h3>📋 Current Question</h3>
+            <div class="question-display" id="questionDisplay">
+              <div id="questionStatus" class="badge">Waiting...</div>
+              <h4 id="qtext">No active question</h4>
+              <ol id="opts"></ol>
+            </div>
+          </div>
+
+          <div class="card question-card">
+            <h3>⏭️ Next Question Preview</h3>
+            <div id="nextQuestionPreview">
+              <p class="muted">Will be shown when available</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>🏆 Latest Results</h3>
+          <div id="questionResults">
+            <p class="muted">No results yet</p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card leaderboard-card">
+          <div class="leaderboard-header">
+            <h3>🏅 Top 10 Leaderboard</h3>
+            <button id="refreshLeaderboard" class="btn btn-secondary">🔄</button>
+          </div>
+          <div id="leaderboardList">Loading top players...</div>
+        </div>
+
+        <div class="card">
+          <h3>👥 Participants</h3>
+          <div class="controls">
+            <input type="text" id="psearch" placeholder="Search name, email, or phone..." />
+            <button id="reloadP" class="btn btn-secondary">🔄</button>
+          </div>
+          <div id="plist">Loading participants...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const roomCode = params.get('room');
+    document.getElementById('room').textContent = roomCode;
+
+    let countdownTimer = null;
+    let currentQuestion = null;
+    let currentQuestionIndex = -1;
+    let allQuestions = [];
+    let participantsData = [];
+    let isConnected = false;
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+
+    // Connection status indicator
+    function updateConnectionStatus(status) {
+      const statusEl = document.getElementById('connectionStatus');
+      const statusMap = {
+        connected: { text: 'Connected', class: 'badge active' },
+        connecting: { text: 'Connecting...', class: 'badge warning' },
+        disconnected: { text: 'Disconnected', class: 'badge danger' }
+      };
+      const config = statusMap[status] || statusMap.connecting;
+      statusEl.textContent = config.text;
+      statusEl.className = config.class;
+      isConnected = status === 'connected';
+    }
+
+    function connectSSE() {
+      updateConnectionStatus('connecting');
+      
+      // Close existing connection
+      if (eventSource) {
+        eventSource.close();
+      }
+      
+      const sseUrl = `/admin/stream/${roomCode}`;
+      eventSource = new EventSource(sseUrl);
+      
+      eventSource.onopen = () => {
+        updateConnectionStatus('connected');
+        reconnectAttempts = 0;
+      };
+      
+      eventSource.addEventListener('connected', (event) => {
+        const data = JSON.parse(event.data);
+        console.log('Admin SSE connected:', data);
+        updateConnectionStatus('connected');
+      });
+      
+      eventSource.addEventListener('question', (event) => {
+        const data = JSON.parse(event.data);
+        renderQuestion(data.question);
+        if (data.deadline) {
+          startCountdown(data.deadline);
+        }
+        // Update question index and preview next question
+        updateQuestionNavigation(data.question);
+      });
+      
+      eventSource.addEventListener('result', (event) => {
+        const data = JSON.parse(event.data);
+        renderResult(data);
+        // Refresh leaderboard after results
+        refreshLeaderboard();
+      });
+      
+      eventSource.addEventListener('presence', (event) => {
+        const data = JSON.parse(event.data);
+        document.getElementById('participantCount').textContent = data.count || 0;
+      });
+      
+      eventSource.onerror = (event) => {
+        updateConnectionStatus('disconnected');
+        console.error('Admin SSE error:', event);
+        
+        // Auto-reconnect with exponential backoff
+        if (reconnectAttempts < maxReconnectAttempts) {
+          const delay = Math.pow(2, reconnectAttempts) * 1000;
+          setTimeout(() => {
+            reconnectAttempts++;
+            connectSSE();
+          }, delay);
+        }
+      };
+    }
+
+    function renderQuestion(q) {
+      const qtext = document.getElementById('qtext');
+      const ol = document.getElementById('opts');
+      const questionNum = document.getElementById('currentQuestionNum');
+      
+      if (!q) { 
+        qtext.textContent = 'Quiz completed! No more questions.';
+        ol.innerHTML = '';
+        questionNum.textContent = 'Done';
+        stopCountdown();
+        document.getElementById('questionStatus').textContent = 'Quiz Finished';
+        document.getElementById('questionStatus').className = 'badge';
+        return;
+      }
+      
+      currentQuestion = q;
+      qtext.textContent = q.text;
+      questionNum.textContent = (q.position || 0) + 1;
+      
+      ol.innerHTML = '';
+      (q.options || []).forEach((o, idx) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<strong>${o.text}</strong> <span class="muted">(${o.id})</span>`;
+        // Highlight correct answer for admin
+        if (o.id === q.correct_option_id) {
+          li.style.background = 'rgba(22, 163, 74, 0.2)';
+          li.style.borderRadius = '6px';
+          li.style.padding = '4px 8px';
+          li.innerHTML += ' <span style="color: var(--success); font-weight: bold;">✓ CORRECT</span>';
+        }
+        ol.appendChild(li);
+      });
+      
+      document.getElementById('questionStatus').textContent = 'Question Active';
+      document.getElementById('questionStatus').className = 'badge active';
+    }
+
+    function updateQuestionNavigation(currentQ) {
+      if (!currentQ) return;
+      
+      currentQuestionIndex = currentQ.position || 0;
+      
+      // Load all questions for proper preview
+      loadQuestionsPreview();
+    }
+
+    async function loadQuestionsPreview() {
+      try {
+        // Fetch all questions for the room
+        const response = await fetch(`/api/room/${roomCode}/questions`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch questions: ${response.status}`);
+        }
+        
+        allQuestions = await response.json();
+        updateNextQuestionDisplay();
+        
+      } catch (error) {
+        console.error('Failed to load questions preview:', error);
+        const nextQuestionDiv = document.getElementById('nextQuestionPreview');
+        nextQuestionDiv.innerHTML = '<p class="muted">Unable to load question preview</p>';
+      }
+    }
+
+    function updateNextQuestionDisplay() {
+      const nextQuestionDiv = document.getElementById('nextQuestionPreview');
+      
+      if (!allQuestions || allQuestions.length === 0) {
+        nextQuestionDiv.innerHTML = '<p class="muted">No questions available</p>';
+        return;
+      }
+      
+      const nextIndex = currentQuestionIndex + 1;
+      const nextQuestion = allQuestions.find(q => q.position === nextIndex);
+      
+      if (!nextQuestion) {
+        // No more questions
+        nextQuestionDiv.innerHTML = `
+          <div class="next-question-preview">
+            <div class="badge">Quiz Complete</div>
+            <div class="muted" style="margin-top: 8px;">
+              No more questions remaining
+            </div>
+            <div style="margin-top: 12px; padding: 12px; background: rgba(34, 197, 94, 0.1); border-radius: 8px;">
+              <div style="font-size: 14px; color: var(--success);">🎉 All questions have been completed!</div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+      
+      // Display the actual next question with correct answer highlighted
+      nextQuestionDiv.innerHTML = `
+        <div class="next-question-preview">
+          <div class="badge">Question ${nextIndex + 1}</div>
+          <div style="margin-top: 12px;">
+            <h4 style="margin: 8px 0; color: var(--ink);">${nextQuestion.text}</h4>
+            <ol style="margin: 8px 0 0 20px; color: var(--muted);">
+              ${nextQuestion.options.map((option, idx) => {
+                const isCorrect = option.id === nextQuestion.correct_option_id;
+                return `
+                  <li style="margin: 4px 0; padding: 4px 8px; ${isCorrect ? 'background: rgba(22, 163, 74, 0.2); border-radius: 4px; color: var(--success); font-weight: 500;' : ''}">
+                    ${option.text}${isCorrect ? ' <strong>✓ CORRECT</strong>' : ''}
+                  </li>
+                `;
+              }).join('')}
+            </ol>
+          </div>
+          <div style="margin-top: 12px; padding: 12px; background: rgba(245, 158, 11, 0.1); border-radius: 8px;">
+            <div style="font-size: 14px; color: var(--muted);">
+              📋 Ready to start when current question ends<br>
+              🔍 Correct answer highlighted in green for your reference
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function startCountdown(deadline) {
+      stopCountdown();
+      const timeEl = document.getElementById('timeRemaining');
+      const statusEl = document.getElementById('questionStatus');
+      
+      function tick() {
+        const remain = Math.max(0, deadline - Date.now());
+        const s = Math.ceil(remain / 1000);
+        timeEl.textContent = s > 0 ? `${s}s` : '0s';
+        
+        if (s > 0) {
+          statusEl.className = 'badge warning';
+        } else {
+          statusEl.textContent = 'Time Up';
+          statusEl.className = 'badge danger';
+        }
+      }
+      
+      countdownTimer = setInterval(tick, 100);
+      tick();
+    }
+
+    function stopCountdown() {
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+      document.getElementById('timeRemaining').textContent = '--';
+    }
+
+    function renderResult(msg) {
+      const resultsDiv = document.getElementById('questionResults');
+      const leaderboard = msg.leaderboard || [];
+      
+      if (leaderboard.length === 0) {
+        resultsDiv.innerHTML = '<p class="muted">No correct answers for this question.</p>';
+      } else {
+        const first = leaderboard[0];
+        resultsDiv.innerHTML = `
+          <div><strong>Correct Answers:</strong> ${leaderboard.length}</div>
+          <div><strong>Fastest:</strong> ${first.name} (${first.ms}ms)</div>
+          <div class="muted" style="margin-top:8px;">Top ${Math.min(3, leaderboard.length)} performers this round</div>
+          <div style="margin-top:8px;">
+            ${leaderboard.slice(0, 3).map((player, idx) => `
+              <div class="leaderboard-item">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <div class="rank ${idx === 0 ? 'gold' : idx === 1 ? 'silver' : 'bronze'}">${idx + 1}</div>
+                  <div>
+                    <div style="font-weight:500;">${player.name}</div>
+                    <div class="muted" style="font-size:12px;">${player.ms}ms • +${player.points} pts</div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+      
+      document.getElementById('questionStatus').textContent = 'Question Complete';
+      document.getElementById('questionStatus').className = 'badge';
+      
+      // Update stats
+      document.getElementById('answersReceived').textContent = leaderboard.length;
+    }
+
+    async function loadParticipants() {
+      try {
+        const res = await fetch(`/api/room/${roomCode}/participants?limit=250`);
+        if (!res.ok) throw new Error('Failed to load participants');
+        
+        const { total, items } = await res.json();
+        participantsData = items || [];
+        
+        renderParticipantList(participantsData);
+        document.getElementById('participantCount').textContent = total || 0;
+      } catch (error) {
+        document.getElementById('plist').innerHTML = '<p class="muted">Failed to load participants</p>';
+      }
+    }
+
+    function renderParticipantList(items) {
+      const list = document.getElementById('plist');
+      const query = (document.getElementById('psearch').value || '').toLowerCase();
+      const filtered = items.filter(p => 
+        p.name.toLowerCase().includes(query) || 
+        p.email.toLowerCase().includes(query) ||
+        (p.phone && p.phone.toLowerCase().includes(query))
+      );
+      
+      if (filtered.length === 0) {
+        list.innerHTML = '<p class="muted">No participants found</p>';
+        return;
+      }
+      
+      list.innerHTML = filtered.map(p => `
+        <div class="participant-item">
+          <div>
+            <div style="font-weight:500;">${p.name || 'Anonymous'}</div>
+            <div class="muted" style="font-size:12px;">${p.email || 'No email'}</div>
+            <div class="muted" style="font-size:12px;">📞 ${p.phone || 'No phone'}</div>
+          </div>
+          <div class="badge">${p.score || 0} pts</div>
+        </div>
+      `).join('');
+    }
+
+    async function refreshLeaderboard() {
+      try {
+        const res = await fetch(`/api/room/${roomCode}/participants?limit=250`);
+        if (!res.ok) throw new Error('Failed to load participants');
+        
+        const { items } = await res.json();
+        
+        // Sort by score (descending) and take top 10
+        const topPlayers = (items || [])
+          .sort((a, b) => (b.score || 0) - (a.score || 0))
+          .slice(0, 10);
+        
+        const list = document.getElementById('leaderboardList');
+        if (topPlayers.length === 0) {
+          list.innerHTML = '<p class="muted">No players with scores yet</p>';
+          return;
+        }
+        
+        list.innerHTML = topPlayers.map((player, idx) => {
+          const rank = idx + 1;
+          const medalIcon = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '';
+          const rankClass = rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : '';
+          
+          return `
+            <div class="leaderboard-item">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div class="rank ${rankClass}">${rank}</div>
+                <div style="flex: 1;">
+                  <div style="font-weight:500;">${medalIcon} ${player.name || 'Anonymous'}</div>
+                  <div class="muted" style="font-size:11px;">${player.email || 'No email'}</div>
+                  <div class="muted" style="font-size:11px;">📞 ${player.phone || 'No phone'}</div>
+                </div>
+              </div>
+              <div class="badge" style="font-weight: bold; font-size: 14px;">${player.score || 0} pts</div>
+            </div>
+          `;
+        }).join('');
+        
+        // Update the display to show how many total players
+        const totalWithScores = items.filter(p => (p.score || 0) > 0).length;
+        if (totalWithScores > 10) {
+          list.innerHTML += `
+            <div style="text-align: center; margin-top: 12px; padding: 8px;">
+              <div class="muted" style="font-size: 12px;">
+                Showing top 10 of ${totalWithScores} players with scores
+              </div>
+            </div>
+          `;
+        }
+        
+      } catch (error) {
+        console.error('Failed to refresh leaderboard:', error);
+        document.getElementById('leaderboardList').innerHTML = '<p class="muted">Failed to load leaderboard</p>';
+      }
+    }
+
+    async function nextQuestion() {
+      const btn = document.getElementById('next');
+      btn.disabled = true;
+      btn.innerHTML = '<div class="loading"><div class="spinner"></div>Starting...</div>';
+      
+      try {
+        const res = await fetch(`/api/room/${roomCode}/next`, { method: 'POST' });
+        const result = await res.json();
+        
+        if (result.ok) {
+          btn.textContent = '✅ Question Started';
+          setTimeout(() => {
+            btn.textContent = '▶️ Next Question';
+            btn.disabled = false;
+          }, 2000);
+        } else {
+          btn.textContent = result.error || '❌ Error';
+          setTimeout(() => {
+            btn.textContent = '▶️ Next Question';
+            btn.disabled = false;
+          }, 3000);
+        }
+      } catch (error) {
+        btn.textContent = '❌ Error - Try Again';
+        setTimeout(() => {
+          btn.textContent = '▶️ Next Question';
+          btn.disabled = false;
+        }, 3000);
+      }
+    }
+
+    function refreshAllData() {
+      loadParticipants();
+      refreshLeaderboard();
+    }
+
+    // Event listeners
+    document.getElementById('next').addEventListener('click', nextQuestion);
+    document.getElementById('refreshLeaderboard').addEventListener('click', refreshLeaderboard);
+    document.getElementById('reloadP').addEventListener('click', loadParticipants);
+    document.getElementById('refreshData').addEventListener('click', refreshAllData);
+    document.getElementById('psearch').addEventListener('input', () => {
+      renderParticipantList(participantsData);
+    });
+
+    // Handle page visibility changes
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
+        connectSSE();
+      }
+    });
+
+    // Handle page unload
+    window.addEventListener('beforeunload', () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    });
+
+    // Initialize
+    connectSSE();
+    loadParticipants();
+    refreshLeaderboard();
+    loadQuestionsPreview();
+  </script>
+</body>
+</html>

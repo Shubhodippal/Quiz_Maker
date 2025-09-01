@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Join Quiz</title>
+  <title>Join Quiz (SSE)</title>
   <style>
     :root{
       --bg:#0b1220; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8;
@@ -64,41 +64,90 @@
     /* session restoration banner */
     .session-banner{background:#0d1f16;border:1px solid var(--success);border-radius:12px;padding:12px;margin-bottom:16px;display:flex;align-items:center;gap:12px}
     .session-banner .icon{color:var(--success);font-size:18px}
+    
+    /* Fullscreen optimizations */
+    :fullscreen {
+      background: var(--bg);
+    }
+    :-webkit-full-screen {
+      background: var(--bg);
+    }
+    :-moz-full-screen {
+      background: var(--bg);
+    }
+    :-ms-fullscreen {
+      background: var(--bg);
+    }
+    
+    /* Better spacing in fullscreen */
+    :fullscreen .wrap {
+      max-width: none;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 2rem;
+    }
+    
+    :fullscreen .card {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    
+    /* Larger question text in fullscreen */
+    :fullscreen h2 {
+      font-size: 2rem;
+      line-height: 1.3;
+    }
+    
+    /* Better option layout in fullscreen */
+    :fullscreen .opts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      margin-top: 2rem;
+    }
+    
+    :fullscreen .opt {
+      padding: 20px 24px;
+      font-size: 1.1rem;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card" id="register">
-      <h1>🎯 Join the Quiz</h1>
+      <h1>🎯 Join the Quiz (SSE)</h1>
       <p class="muted">Room code: <span id="room"></span></p>
       <div class="row" style="margin:10px 0 12px">
-        <input id="name" placeholder="Your name *" style="flex:1 1 220px" required>
-        <input id="email" placeholder="Email (optional)" style="flex:1 1 220px" type="email">
-        <input id="phone" placeholder="Phone (optional)" style="flex:1 1 180px" type="tel">
+        <input type="text" id="name" placeholder="Your name *" maxlength="50" required />
+        <input type="email" id="email" placeholder="Email address *" maxlength="100" required />
+        <input type="tel" id="phone" placeholder="Phone number *" maxlength="20" required />
       </div>
       <button class="btn primary" id="join">Join Room</button>
       <p class="muted" style="margin-top:12px;font-size:13px;">
-        💡 Your session will be saved - you can refresh the page without losing your progress.
+        * All fields are required to join the quiz<br>
+        Using Server-Sent Events for better mobile connectivity
       </p>
     </div>
 
     <div class="card" id="game" style="display:none;">
       <div id="sessionBanner" class="session-banner" style="display:none;">
-        <div class="icon">🔄</div>
+        <span class="icon">🔄</span>
         <div>
-          <div style="font-weight:500;">Session Restored</div>
-          <div class="muted" style="font-size:13px;">Welcome back! You've been reconnected to the quiz.</div>
+          <strong>Session Restored</strong>
+          <div class="muted" style="font-size:12px;">Your previous session was automatically restored</div>
         </div>
       </div>
 
       <div class="header">
-        <div class="muted">
-          Player: <strong id="playerName"></strong> · 
-          <span class="badge"><span id="playerId"></span></span>
-        </div>
-        <div class="badge status-indicator" id="status">
+        <div class="status-indicator">
           <span class="status-dot" id="statusDot"></span>
-          <span id="statusText">Waiting…</span>
+          <span id="statusText">Connecting...</span>
+        </div>
+        <div class="badge">
+          <span id="playerName">Player</span> • <span id="playerId">------</span>
         </div>
       </div>
 
@@ -127,12 +176,12 @@
 
   // state
   let player = null;
-  let ws = null;
-  let chosenId = null;          // selected option id (prefixed)
-  let deadline = 0;
-  let timer = null;
+  let eventSource = null;
   let reconnectAttempts = 0;
   const maxReconnectAttempts = 5;
+  let chosenId = null;
+  let deadline = 0;
+  let timer = null;
 
   // elements
   const $reg = document.getElementById('register');
@@ -140,7 +189,6 @@
   const $sessionBanner = document.getElementById('sessionBanner');
   const $playerName = document.getElementById('playerName');
   const $playerId = document.getElementById('playerId');
-  const $status = document.getElementById('status');
   const $statusText = document.getElementById('statusText');
   const $statusDot = document.getElementById('statusDot');
   const $qtext = document.getElementById('qtext');
@@ -156,30 +204,12 @@
       const savedSession = localStorage.getItem(STORAGE_KEYS.session);
       
       if (savedPlayer && savedSession) {
-        const playerData = JSON.parse(savedPlayer);
+        player = JSON.parse(savedPlayer);
         const sessionData = JSON.parse(savedSession);
         
-        // Check if session is still valid (within 24 hours)
-        const sessionAge = Date.now() - sessionData.timestamp;
-        const maxSessionAge = 24 * 60 * 60 * 1000; // 24 hours
-        
-        if (sessionAge < maxSessionAge && playerData.room_code === code) {
-          player = playerData;
-          showGameInterface(true);
-          ensureSocket(() => {
-            ws.send(JSON.stringify({
-              type: 'register',
-              playerId: player.id,
-              player: { id: player.id, name: player.name, email: player.email },
-              reconnect: true
-            }));
-          });
-          toast('Reconnected to your session', 2000, 'success');
-          return true;
-        } else {
-          // Clean up expired session
-          clearStoredSession();
-        }
+        showGameInterface(true);
+        connectSSE();
+        return true;
       }
     } catch (error) {
       console.warn('Failed to restore session:', error);
@@ -218,9 +248,7 @@
     
     if (isRestore) {
       $sessionBanner.style.display = 'flex';
-      setTimeout(() => {
-        $sessionBanner.style.display = 'none';
-      }, 5000);
+      setTimeout(() => $sessionBanner.style.display = 'none', 5000);
     }
   }
 
@@ -229,8 +257,7 @@
       connected: { text: 'Connected', class: 'connected' },
       connecting: { text: 'Connecting...', class: 'connecting' },
       disconnected: { text: 'Disconnected', class: 'disconnected' },
-      ready: { text: 'Ready', class: 'connected' },
-      waiting: { text: 'Waiting…', class: 'connected' }
+      waiting: { text: 'Waiting for quiz...', class: 'connected' }
     };
     
     const config = statusMap[status] || statusMap.waiting;
@@ -263,14 +290,12 @@
     tick(); // initial
     timer = setInterval(tick, 150);
     function tick() {
-      const now = Date.now();
-      const remain = Math.max(0, dl - now);
-      const secs = Math.ceil(remain / 1000);
-      $statusText.textContent = remain > 0 ? `Time left: ${secs}s` : 'Time up';
-      $pbar.style.width = `${percentageLeft()}%`;
-      if (remain <= 0) {
-        setDisabled(true);
+      const pct = percentageLeft();
+      $pbar.style.width = pct + '%';
+      if (pct <= 0) {
         stopCountdown();
+        setDisabled(true);
+        $note.textContent = 'Time up! Waiting for results...';
       }
     }
   }
@@ -288,58 +313,74 @@
   function renderQuestion(q, dl) {
     clearOptions();
     if (!q) {
-      $qtext.textContent = 'Quiz over! 🎉';
-      updateConnectionStatus('ready');
-      $note.textContent = 'Thanks for playing. Your session has been saved.';
-      $pbar.style.width = '0%';
+      $qtext.textContent = 'Quiz completed! Thanks for playing.';
       return;
     }
     $qtext.textContent = q.text;
     $note.textContent = 'Tap once to choose. You can\'t change after submitting.';
     (q.options || []).forEach((o, idx) => {
-      const el = document.createElement('div');
-      el.className = 'opt';
-      el.dataset.oid = o.id;
-
-      const row = document.createElement('div');
-      row.className = 'opt-row';
-
-      const bullet = document.createElement('div');
-      bullet.className = 'bullet';
-      bullet.innerHTML = ''; // filled when picked
-
-      const text = document.createElement('div');
-      text.className = 'text';
-      text.textContent = o.text;
-
-      row.appendChild(bullet);
-      row.appendChild(text);
-      el.appendChild(row);
-
-      el.onclick = () => {
-        if (!player || chosenId) return;
-        chosenId = o.id;
-        markPicked(chosenId);
-        sendAnswer(chosenId);
-        toast('Answer submitted', 1400, 'success');
-        setDisabled(true);
-      };
-      $opts.appendChild(el);
+      const div = document.createElement('div');
+      div.className = 'opt';
+      div.innerHTML = `
+        <div class="opt-row">
+          <div class="bullet"></div>
+          <div class="text">${o.text}</div>
+        </div>
+      `;
+      div.addEventListener('click', () => handleOptionClick(o.id, div));
+      $opts.appendChild(div);
     });
     if (dl) startCountdown(dl);
   }
 
   function markPicked(id) {
     document.querySelectorAll('.opt').forEach(el => {
-      el.classList.toggle('picked', el.dataset.oid === id);
-      const b = el.querySelector('.bullet');
-      if (!b) return;
-      if (el.dataset.oid === id) {
-        b.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="#0b1220" xmlns="http://www.w3.org/2000/svg"><path d="M20.285 6.709a1 1 0 0 1 0 1.414l-10.01 10.01a1 1 0 0 1-1.414 0L3.715 12.99a1 1 0 0 1 1.414-1.414l4.025 4.025 9.303-9.303a1 1 0 0 1 1.828.411z"/></svg>';
-      } else {
-        b.innerHTML = '';
+      el.classList.remove('picked');
+    });
+    // Find and mark the picked option
+    document.querySelectorAll('.opt').forEach((el, idx) => {
+      if (el.dataset.optionId === id) {
+        el.classList.add('picked');
       }
     });
+  }
+
+  async function handleOptionClick(optionId, element) {
+    if (chosenId || !player) return;
+    
+    chosenId = optionId;
+    element.classList.add('picked');
+    element.dataset.optionId = optionId;
+    setDisabled(true);
+    
+    try {
+      const response = await fetch(`/api/room/${code}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: player.id,
+          optionId: optionId
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (response.ok && result.type === 'accepted') {
+        toast('Answer submitted!', 1500, 'success');
+        $note.textContent = 'Answer submitted! Waiting for results...';
+      } else {
+        toast(result.message || 'Failed to submit answer', 2500, 'error');
+        setDisabled(false);
+        chosenId = null;
+        element.classList.remove('picked');
+      }
+    } catch (error) {
+      console.error('Answer submission failed:', error);
+      toast('Connection error. Please try again.', 2500, 'error');
+      setDisabled(false);
+      chosenId = null;
+      element.classList.remove('picked');
+    }
   }
 
   async function join() {
@@ -348,10 +389,40 @@
     const phone = document.getElementById('phone').value.trim();
 
     const body = { name, email, phone };
-    if (!body.name) { 
-      toast('Please enter your name', 2000, 'error'); 
+    
+    // Validate all required fields
+    if (!body.name) {
+      toast('Please enter your name', 2000, 'error');
       document.getElementById('name').focus();
-      return; 
+      return;
+    }
+    
+    if (!body.email) {
+      toast('Please enter your email address', 2000, 'error');
+      document.getElementById('email').focus();
+      return;
+    }
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(body.email)) {
+      toast('Please enter a valid email address', 2000, 'error');
+      document.getElementById('email').focus();
+      return;
+    }
+    
+    if (!body.phone) {
+      toast('Please enter your phone number', 2000, 'error');
+      document.getElementById('phone').focus();
+      return;
+    }
+    
+    // Basic phone validation (at least 10 digits)
+    const phoneDigits = body.phone.replace(/\D/g, '');
+    if (phoneDigits.length < 10) {
+      toast('Please enter a valid phone number (at least 10 digits)', 2000, 'error');
+      document.getElementById('phone').focus();
+      return;
     }
 
     const joinBtn = document.getElementById('join');
@@ -359,138 +430,120 @@
     joinBtn.textContent = 'Joining...';
 
     try {
-      // register via REST
-      const res = await fetch('/api/room/' + code + '/register', {
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
+      const response = await fetch(`/api/room/${code}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      
-      if (!res.ok) { 
-        const errorText = await res.text();
-        toast(`Join failed: ${errorText || 'Unknown error'}`, 3000, 'error'); 
-        return; 
-      }
-      
-      player = await res.json();
-      
-      // Save session for persistence
-      saveSession(player);
-      
-      // show game UI
-      showGameInterface(false);
 
-      // connect / or if already connected, send identity
-      ensureSocket(() => {
-        ws.send(JSON.stringify({
-          type: 'register',
-          playerId: player.id,
-          player: { id: player.id, name: player.name, email: player.email }
-        }));
-      });
-      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || `Registration failed (${response.status})`;
+        throw new Error(errorMessage);
+      }
+
+      player = await response.json();
+      saveSession(player);
+      showGameInterface();
+      connectSSE();
       toast('Successfully joined the quiz!', 2000, 'success');
     } catch (error) {
-      toast(`Connection error: ${error.message}`, 3000, 'error');
+      toast(`${error.message}`, 3000, 'error');
     } finally {
       joinBtn.disabled = false;
       joinBtn.textContent = 'Join Room';
     }
   }
 
-  function ensureSocket(onOpen) {
-    if (ws && ws.readyState === WebSocket.OPEN) { 
-      onOpen && onOpen(); 
-      return; 
-    }
+  function connectSSE() {
+    if (!player) return;
     
     updateConnectionStatus('connecting');
     
-    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${protocol}://${location.host}/ws/${code}`;
+    // Close existing connection
+    if (eventSource) {
+      eventSource.close();
+    }
     
-    ws = new WebSocket(url);
+    const sseUrl = `/stream/${code}?playerId=${player.id}`;
+    eventSource = new EventSource(sseUrl);
     
-    ws.addEventListener('open', () => {
-      reconnectAttempts = 0;
+    eventSource.onopen = () => {
       updateConnectionStatus('connected');
-      // initial lightweight register (some gateways need a first frame)
-      ws.send(JSON.stringify({ type: 'register' }));
-      onOpen && onOpen();
+      reconnectAttempts = 0;
+    };
+    
+    eventSource.addEventListener('connected', (event) => {
+      const data = JSON.parse(event.data);
+      console.log('SSE connected:', data);
+      updateConnectionStatus('waiting');
     });
     
-    ws.addEventListener('message', (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        handleWebSocketMessage(msg);
-      } catch (error) {
-        console.warn('Failed to parse message:', error);
-      }
+    eventSource.addEventListener('question', (event) => {
+      const data = JSON.parse(event.data);
+      renderQuestion(data.question, data.deadline);
     });
     
-    ws.addEventListener('close', (ev) => {
+    eventSource.addEventListener('result', (event) => {
+      const data = JSON.parse(event.data);
+      handleResult(data);
+    });
+    
+    eventSource.addEventListener('presence', (event) => {
+      const data = JSON.parse(event.data);
+      console.log('Presence update:', data.count);
+    });
+    
+    eventSource.onerror = (event) => {
       updateConnectionStatus('disconnected');
+      console.error('SSE error:', event);
       
-      // Exponential backoff for reconnection
+      // Auto-reconnect with exponential backoff
       if (reconnectAttempts < maxReconnectAttempts) {
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+        const delay = Math.pow(2, reconnectAttempts) * 1000;
         setTimeout(() => {
           reconnectAttempts++;
-          ensureSocket(onOpen);
+          connectSSE();
         }, delay);
       } else {
-        updateConnectionStatus('disconnected');
         toast('Connection lost. Please refresh the page.', 5000, 'error');
       }
-    });
-    
-    ws.addEventListener('error', (ev) => {
-      console.warn('WebSocket error:', ev);
-      updateConnectionStatus('disconnected');
-    });
+    };
   }
 
-  function handleWebSocketMessage(msg) {
-    switch (msg.type) {
-      case 'question':
-        renderQuestion(msg.question, msg.deadline);
-        break;
-      case 'status':
-        if (msg.message) toast(msg.message);
-        break;
-      case 'result':
-        // optional feedback: show a subtle marker on your pick
-        if (chosenId) {
-          // highlight my pick as correct/incorrect
-          const mine = document.querySelector(`.opt[data-oid="${chosenId}"]`);
-          if (mine) {
-            mine.classList.add(chosenId === msg.correct_option_id ? 'correct' : 'incorrect');
+  function handleResult(data) {
+    stopCountdown();
+    setDisabled(true);
+    
+    // Players only receive the correct answer ID - no scores or leaderboards
+    // Show correct/incorrect for chosen answer
+    if (chosenId && data.correct_option_id) {
+      document.querySelectorAll('.opt').forEach(el => {
+        if (el.dataset.optionId === chosenId) {
+          if (chosenId === data.correct_option_id) {
+            el.classList.add('correct');
+            toast('Correct! 🎉', 2000, 'success');
+          } else {
+            el.classList.add('incorrect');
+            toast('Incorrect answer', 2000, 'error');
           }
         }
-        updateConnectionStatus('ready');
-        stopCountdown();
-        break;
-      case 'registered':
-        if (msg.ok && player) {
-          updateConnectionStatus('ready');
+        // Also highlight the correct answer for learning
+        if (el.dataset.optionId === data.correct_option_id) {
+          el.style.outline = '2px solid var(--success)';
+          el.style.backgroundColor = 'rgba(22, 163, 74, 0.1)';
         }
-        break;
-      case 'accepted':
-        // Answer was accepted
-        break;
-      case 'error':
-        toast(`Error: ${msg.message}`, 3000, 'error');
-        break;
+      });
     }
-  }
-
-  function sendAnswer(optionId) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) { 
-      toast('Connection lost - trying to reconnect...', 2000, 'error'); 
-      ensureSocket(() => sendAnswer(optionId));
-      return; 
-    }
-    ws.send(JSON.stringify({ type: 'answer', playerId: player.id, optionId }));
+    
+    $note.textContent = 'Results received. Waiting for next question...';
+    
+    // Clear after a few seconds
+    setTimeout(() => {
+      clearOptions();
+      $qtext.textContent = 'Waiting for next question…';
+      $note.textContent = 'Pick one option before time\'s up.';
+    }, 4000);
   }
 
   // Wire up join button
@@ -505,32 +558,77 @@
 
   // Handle page visibility changes (user switches tabs/apps)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && player && ws && ws.readyState !== WebSocket.OPEN) {
-      // Page became visible and we have a player but no connection
-      ensureSocket(() => {
-        ws.send(JSON.stringify({
-          type: 'register',
-          playerId: player.id,
-          player: { id: player.id, name: player.name, email: player.email },
-          reconnect: true
-        }));
-      });
+    if (!document.hidden && player && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
+      connectSSE();
     }
   });
 
   // Handle page unload (save state)
   window.addEventListener('beforeunload', () => {
     if (player) {
-      // Update session timestamp on page unload
       saveSession(player);
+    }
+    if (eventSource) {
+      eventSource.close();
     }
   });
 
-  // Initialize - check for existing session or prep socket
+  // Fullscreen functionality
+  function enterFullscreen() {
+    const elem = document.documentElement;
+    if (elem.requestFullscreen) {
+      elem.requestFullscreen();
+    } else if (elem.mozRequestFullScreen) { // Firefox
+      elem.mozRequestFullScreen();
+    } else if (elem.webkitRequestFullscreen) { // Chrome, Safari and Opera
+      elem.webkitRequestFullscreen();
+    } else if (elem.msRequestFullscreen) { // IE/Edge
+      elem.msRequestFullscreen();
+    }
+  }
+
+  function exitFullscreen() {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.mozCancelFullScreen) { // Firefox
+      document.mozCancelFullScreen();
+    } else if (document.webkitExitFullscreen) { // Chrome, Safari and Opera
+      document.webkitExitFullscreen();
+    } else if (document.msExitFullscreen) { // IE/Edge
+      document.msExitFullscreen();
+    }
+  }
+
+  // Auto-enter fullscreen when game starts
+  function autoEnterFullscreen() {
+    // Only enter fullscreen if not already in fullscreen
+    if (!document.fullscreenElement && !document.mozFullScreenElement && 
+        !document.webkitFullscreenElement && !document.msFullscreenElement) {
+      
+      // Request fullscreen with user interaction
+      enterFullscreen().catch(err => {
+        console.log('Could not enter fullscreen automatically:', err);
+        // Show a toast message suggesting manual fullscreen
+        toast('Tip: Press F11 for better gaming experience!', 3000, 'info');
+      });
+    }
+  }
+
+  // Override showGameInterface to trigger fullscreen
+  const originalShowGameInterface = showGameInterface;
+  showGameInterface = function(isRestore = false) {
+    originalShowGameInterface(isRestore);
+    
+    // Enter fullscreen when game interface is shown
+    setTimeout(() => {
+      autoEnterFullscreen();
+    }, 100); // Small delay to ensure UI is ready
+  };
+
+  // Initialize - check for existing session
   if (code) {
     if (!checkExistingSession()) {
-      // No existing session, prepare socket for when user joins
-      ensureSocket();
+      updateConnectionStatus('waiting');
     }
   } else {
     // No room code provided

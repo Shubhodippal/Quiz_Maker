@@ -108,11 +108,31 @@ export default {
       if (phoneDigits.length < 10) {
         return json({ error: "Please provide a valid phone number with at least 10 digits" }, { status: 400 });
       }
-      
-      const pid = crypto.randomUUID();
+
       const name = body.name.trim();
       const email = body.email.trim().toLowerCase();
       const phone = body.phone.trim();
+
+      // Check if player is banned from this room (by email, phone, or combination)
+      try {
+        const banCheck = await env.DB.prepare(
+          `SELECT id FROM banned_players 
+           WHERE room_code = ? AND (
+             player_email = ? OR 
+             player_phone = ? OR 
+             (player_email = ? AND player_phone = ?)
+           )`
+        ).bind(code, email, phone, email, phone).first();
+
+        if (banCheck) {
+          return json({ error: "You have been banned from this quiz room due to excessive warnings." }, { status: 403 });
+        }
+      } catch (error) {
+        console.error("Ban check error:", error);
+        // Continue with registration if ban check fails (fail-safe approach)
+      }
+      
+      const pid = crypto.randomUUID();
       
       await env.DB.prepare(
         "INSERT INTO players (id, room_code, name, email, phone, score) VALUES (?, ?, ?, ?, ?, 0)"
@@ -120,6 +140,45 @@ export default {
         .bind(pid, code, name, email, phone)
         .run();
       return json({ id: pid, name, email, phone });
+    }
+
+    // Check ban status for a player (for session restoration)
+    const banCheck = url.pathname.match(/^\/api\/room\/([A-Z0-9]{5})\/ban-check$/);
+    if (banCheck && request.method === "POST") {
+      const code = banCheck[1];
+      const body = (await request.json()) as { playerId?: string; email?: string; phone?: string };
+      
+      if (!body.playerId && !body.email && !body.phone) {
+        return json({ error: "Player ID, email, or phone is required" }, { status: 400 });
+      }
+
+      try {
+        let query = `SELECT id, ban_reason, banned_at FROM banned_players WHERE room_code = ?`;
+        let params = [code];
+
+        if (body.playerId) {
+          query += ` AND player_id = ?`;
+          params.push(body.playerId);
+        } else {
+          query += ` AND (player_email = ? OR player_phone = ?)`;
+          params.push(body.email || '', body.phone || '');
+        }
+
+        const banRecord = await env.DB.prepare(query).bind(...params).first();
+
+        if (banRecord) {
+          return json({ 
+            banned: true, 
+            reason: banRecord.ban_reason || 'excessive_warnings',
+            banned_at: banRecord.banned_at 
+          });
+        } else {
+          return json({ banned: false });
+        }
+      } catch (error) {
+        console.error("Ban check error:", error);
+        return json({ error: "Failed to check ban status" }, { status: 500 });
+      }
     }
 
     // Participants list (admin panel)
@@ -137,14 +196,85 @@ export default {
       return json({ total: totalRow?.c || 0, items: results || [] });
     }
 
-    // Top 5 winners
+    // Top 50 winners with warning counts
     const win = url.pathname.match(/^\/api\/room\/([A-Z0-9]{5})\/winners$/);
     if (win && request.method === "GET") {
       const code = win[1];
-      const { results } = await env.DB.prepare(
-        "SELECT id, name, email, phone, score FROM players WHERE room_code = ? ORDER BY score DESC, id LIMIT 5"
-      ).bind(code).all();
-      return json(results || []);
+      try {
+        // Get top 50 players with their warning counts
+        const { results } = await env.DB.prepare(
+          `SELECT 
+             p.id, 
+             p.name, 
+             p.email, 
+             p.phone, 
+             p.score,
+             COALESCE(SUM(pw.warning_count), 0) as warning_count,
+             CASE WHEN bp.player_id IS NOT NULL THEN 1 ELSE 0 END as is_banned
+           FROM players p 
+           LEFT JOIN player_warnings pw ON p.id = pw.player_id AND p.room_code = pw.room_code
+           LEFT JOIN banned_players bp ON p.id = bp.player_id AND p.room_code = bp.room_code
+           WHERE p.room_code = ? 
+           GROUP BY p.id, p.name, p.email, p.phone, p.score, bp.player_id
+           ORDER BY p.score DESC, p.id 
+           LIMIT 50`
+        ).bind(code).all();
+        return json(results || []);
+      } catch (error) {
+        console.error("Error fetching winners with warnings:", error);
+        // Fallback to original query if there's an issue
+        const { results } = await env.DB.prepare(
+          "SELECT id, name, email, phone, score, 0 as warning_count, 0 as is_banned FROM players WHERE room_code = ? ORDER BY score DESC, id LIMIT 50"
+        ).bind(code).all();
+        return json(results || []);
+      }
+    }
+
+    // Warning and ban statistics (admin endpoint)
+    const warnings = url.pathname.match(/^\/api\/room\/([A-Z0-9]{5})\/warnings$/);
+    if (warnings && request.method === "GET") {
+      const code = warnings[1];
+      try {
+        // Get active warnings grouped by player
+        const { results: warningResults } = await env.DB.prepare(
+          `SELECT 
+             pw.player_id, 
+             p.name, 
+             p.email, 
+             p.phone,
+             SUM(pw.warning_count) as total_warnings,
+             MAX(pw.created_at) as last_warning_at
+           FROM player_warnings pw 
+           JOIN players p ON pw.player_id = p.id 
+           WHERE pw.room_code = ? 
+           GROUP BY pw.player_id, p.name, p.email, p.phone
+           ORDER BY total_warnings DESC, last_warning_at DESC`
+        ).bind(code).all();
+
+        // Get banned players
+        const { results: bannedResults } = await env.DB.prepare(
+          `SELECT 
+             bp.player_id, 
+             p.name, 
+             bp.player_email, 
+             bp.player_phone,
+             bp.warning_count,
+             bp.banned_at,
+             bp.ban_reason
+           FROM banned_players bp 
+           LEFT JOIN players p ON bp.player_id = p.id 
+           WHERE bp.room_code = ? 
+           ORDER BY bp.banned_at DESC`
+        ).bind(code).all();
+
+        return json({
+          warnings: warningResults || [],
+          banned: bannedResults || []
+        });
+      } catch (error) {
+        console.error("Error fetching warning statistics:", error);
+        return json({ error: "Failed to fetch warning statistics" }, { status: 500 });
+      }
     }
 
     // Get all questions for admin preview
@@ -213,6 +343,94 @@ export default {
         body: await request.text(),
         headers: { "Content-Type": "application/json" }
       });
+    }
+
+    // Warning submission endpoint (HTTP POST)
+    const warningSubmit = url.pathname.match(/^\/api\/room\/([A-Z0-9]{5})\/warning$/);
+    if (warningSubmit && request.method === "POST") {
+      const code = warningSubmit[1];
+      const body = await request.json() as { 
+        playerId: string; 
+        warningType: string;
+        playerEmail: string;
+        playerPhone: string;
+      };
+      
+      if (!body.playerId || !body.warningType || !body.playerEmail || !body.playerPhone) {
+        return json({ error: "Missing required warning data" }, { status: 400 });
+      }
+
+      try {
+        // Check if player is already banned
+        const existingBan = await env.DB.prepare(
+          `SELECT id FROM banned_players 
+           WHERE room_code = ? AND (
+             player_id = ? OR 
+             player_email = ? OR 
+             player_phone = ? OR 
+             (player_email = ? AND player_phone = ?)
+           )`
+        ).bind(code, body.playerId, body.playerEmail, body.playerPhone, body.playerEmail, body.playerPhone).first();
+
+        if (existingBan) {
+          return json({ 
+            type: "banned", 
+            message: "You have been banned from this quiz room due to excessive warnings." 
+          }, { status: 403 });
+        }
+
+        // Get current warning count for this player in this room
+        const warningResult = await env.DB.prepare(
+          `SELECT SUM(warning_count) as total_warnings FROM player_warnings 
+           WHERE room_code = ? AND (
+             player_id = ? OR 
+             player_email = ? OR 
+             player_phone = ? OR 
+             (player_email = ? AND player_phone = ?)
+           )`
+        ).bind(code, body.playerId, body.playerEmail, body.playerPhone, body.playerEmail, body.playerPhone).first<any>();
+
+        const currentWarnings = warningResult?.total_warnings || 0;
+        const newWarningCount = currentWarnings + 1;
+
+        // Insert warning record
+        const warningId = crypto.randomUUID();
+        await env.DB.prepare(
+          "INSERT INTO player_warnings (id, room_code, player_id, player_email, player_phone, warning_type, warning_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(warningId, code, body.playerId, body.playerEmail, body.playerPhone, body.warningType, 1, Date.now()).run();
+
+        // Check if player should be banned (4 or more warnings)
+        if (newWarningCount >= 4) {
+          const banId = crypto.randomUUID();
+          await env.DB.prepare(
+            "INSERT INTO banned_players (id, room_code, player_id, player_email, player_phone, ban_reason, warning_count, banned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+          ).bind(banId, code, body.playerId, body.playerEmail, body.playerPhone, "excessive_warnings", newWarningCount, Date.now()).run();
+
+          // Notify the durable object about the ban
+          const id = env.ROOM.idFromName(code);
+          env.ROOM.get(id).fetch("https://do/ban", { 
+            method: "POST", 
+            body: JSON.stringify({ playerId: body.playerId }),
+            headers: { "Content-Type": "application/json" }
+          });
+
+          return json({ 
+            type: "banned", 
+            warningCount: newWarningCount,
+            message: "You have been banned from this quiz room due to excessive warnings." 
+          });
+        }
+
+        return json({ 
+          type: "warning", 
+          warningCount: newWarningCount,
+          message: `Warning ${newWarningCount}/4: Please keep the quiz tab active and visible.` 
+        });
+
+      } catch (error) {
+        console.error("Warning system error:", error);
+        return json({ error: "Failed to process warning" }, { status: 500 });
+      }
     }
 
     // Admin stream endpoint
@@ -362,6 +580,11 @@ export class Room {
     // Answer submission (HTTP POST)
     if (url.pathname === "/answer" && request.method === "POST") {
       return this.handleAnswerSubmission(request);
+    }
+
+    // Player ban notification (HTTP POST)
+    if (url.pathname === "/ban" && request.method === "POST") {
+      return this.handlePlayerBan(request);
     }
 
     // WebSocket
@@ -610,6 +833,55 @@ export class Room {
     } catch (error) {
       console.error("Answer submission error:", error);
       return json({ error: "Invalid request" }, { status: 400 });
+    }
+  }
+
+  // Player Ban Handler
+  async handlePlayerBan(request: Request): Promise<Response> {
+    try {
+      const body = await request.json() as { playerId: string };
+      
+      if (!body.playerId) {
+        return json({ error: "Missing player ID" }, { status: 400 });
+      }
+
+      // Remove player from presence tracking
+      if (this.present.has(body.playerId)) {
+        this.present.delete(body.playerId);
+        this.broadcast({ type: "presence", count: this.present.size });
+      }
+
+      // Close all connections for this player
+      for (const client of this.clients) {
+        if (client.playerId === body.playerId) {
+          if (client.ws) {
+            client.ws.close(1000, "Player banned from quiz room");
+          }
+          this.clients.delete(client);
+        }
+      }
+
+      // Close SSE connections for this player
+      for (const conn of this.sseConnections) {
+        if (conn.playerId === body.playerId) {
+          try {
+            this.sendSSEMessage(conn.controller, {
+              type: "banned",
+              message: "You have been banned from this quiz room due to excessive warnings."
+            }, "banned");
+            // Close the SSE connection
+            conn.controller.close();
+          } catch (error) {
+            console.error("Error closing SSE connection for banned player:", error);
+          }
+          this.sseConnections.delete(conn);
+        }
+      }
+
+      return json({ success: true, message: "Player banned successfully" });
+    } catch (error) {
+      console.error("Player ban error:", error);
+      return json({ error: "Failed to ban player" }, { status: 500 });
     }
   }
 

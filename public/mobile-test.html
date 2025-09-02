@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Mobile Warning Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #000; color: #fff; }
+        .test-box { background: #333; padding: 20px; border-radius: 10px; margin: 10px 0; }
+        .status { padding: 10px; margin: 5px 0; border-radius: 5px; }
+        .success { background: #0f5132; }
+        .warning { background: #664d03; }
+        .error { background: #58151c; }
+        button { padding: 15px 20px; font-size: 16px; margin: 10px 5px; border: none; border-radius: 5px; cursor: pointer; }
+        .test-btn { background: #0d6efd; color: white; }
+        .clear-btn { background: #6c757d; color: white; }
+        #logs { max-height: 300px; overflow-y: auto; background: #222; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>📱 Mobile Warning System Test</h1>
+    
+    <div class="test-box">
+        <h3>Test Room: 9V55D</h3>
+        <p><strong>Instructions:</strong></p>
+        <ol>
+            <li>Click "Start Test" below</li>
+            <li>Press your phone's back button or minimize browser</li>
+            <li>Return to see if warning was triggered</li>
+        </ol>
+        
+        <button class="test-btn" onclick="window.open('https://realtime-quiz-worker.shubhodippal01.workers.dev/play_sse.html?room=9V55D', '_blank')">
+            🚀 Start Test in New Tab
+        </button>
+        
+        <button class="clear-btn" onclick="clearLogs()">Clear Logs</button>
+    </div>
+
+    <div class="test-box">
+        <h3>Device Detection</h3>
+        <div id="device-info"></div>
+    </div>
+
+    <div class="test-box">
+        <h3>Live Detection Test</h3>
+        <div id="status" class="status">Ready to test...</div>
+        <button class="test-btn" onclick="startLiveTest()">Start Live Detection</button>
+        <button class="clear-btn" onclick="stopLiveTest()">Stop Detection</button>
+    </div>
+
+    <div class="test-box">
+        <h3>Console Logs</h3>
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        let testActive = false;
+        let logContainer = document.getElementById('logs');
+        let statusDiv = document.getElementById('status');
+        let detectionCount = 0;
+
+        // Device detection
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        const isTablet = /iPad|Android(?=.*\bMobile\b)/i.test(navigator.userAgent);
+        
+        document.getElementById('device-info').innerHTML = `
+            <div class="status ${isMobile || isTablet ? 'success' : 'warning'}">
+                <strong>Device Type:</strong> ${isMobile ? 'Mobile Phone' : isTablet ? 'Tablet' : 'Desktop/Other'}<br>
+                <strong>User Agent:</strong> ${navigator.userAgent.substring(0, 100)}...<br>
+                <strong>Mobile Detection:</strong> ${isMobile || isTablet ? '✅ Mobile Detected' : '❌ Not Mobile'}
+            </div>
+        `;
+
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `status ${type}`;
+            logEntry.innerHTML = `[${timestamp}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function clearLogs() {
+            logContainer.innerHTML = '';
+        }
+
+        function startLiveTest() {
+            testActive = true;
+            detectionCount = 0;
+            statusDiv.innerHTML = '<div class="status success">🔍 Live detection active - try minimizing or switching apps!</div>';
+            addLog('Live detection started', 'success');
+
+            // Add visibility change listener
+            document.addEventListener('visibilitychange', handleTestVisibilityChange);
+            window.addEventListener('blur', handleTestBlur);
+            document.addEventListener('pagehide', handleTestPageHide);
+        }
+
+        function stopLiveTest() {
+            testActive = false;
+            statusDiv.innerHTML = '<div class="status">Detection stopped</div>';
+            addLog('Live detection stopped', 'warning');
+
+            // Remove listeners
+            document.removeEventListener('visibilitychange', handleTestVisibilityChange);
+            window.removeEventListener('blur', handleTestBlur);
+            document.removeEventListener('pagehide', handleTestPageHide);
+        }
+
+        function handleTestVisibilityChange() {
+            if (!testActive) return;
+            
+            if (document.hidden) {
+                detectionCount++;
+                addLog(`Detection ${detectionCount}: Page became hidden (visibilitychange)`, 'error');
+                statusDiv.innerHTML = `<div class="status error">⚠️ Warning ${detectionCount}: Page hidden detected!</div>`;
+            } else {
+                addLog('Page became visible again', 'success');
+                statusDiv.innerHTML = '<div class="status success">✅ Page visible - detection active</div>';
+            }
+        }
+
+        function handleTestBlur() {
+            if (!testActive) return;
+            detectionCount++;
+            addLog(`Detection ${detectionCount}: Window blur detected`, 'error');
+        }
+
+        function handleTestPageHide() {
+            if (!testActive) return;
+            detectionCount++;
+            addLog(`Detection ${detectionCount}: Page hide detected`, 'error');
+        }
+
+        // Initial log
+        addLog('Mobile Warning Test Page Loaded', 'success');
+        addLog(`Device detected as: ${isMobile ? 'Mobile' : isTablet ? 'Tablet' : 'Desktop'}`, 'info');
+    </script>
+</body>
+</html>

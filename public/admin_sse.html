@@ -123,7 +123,7 @@
       <div>
         <div class="card leaderboard-card">
           <div class="leaderboard-header">
-            <h3>🏅 Top 10 Leaderboard</h3>
+            <h3>🏅 Top 50 Leaderboard</h3>
             <button id="refreshLeaderboard" class="btn btn-secondary">🔄</button>
           </div>
           <div id="leaderboardList">Loading top players...</div>
@@ -136,6 +136,14 @@
             <button id="reloadP" class="btn btn-secondary">🔄</button>
           </div>
           <div id="plist">Loading participants...</div>
+        </div>
+
+        <div class="card">
+          <h3>⚠️ Warnings & Bans</h3>
+          <div class="controls">
+            <button id="refreshWarnings" class="btn btn-secondary">🔄 Refresh</button>
+          </div>
+          <div id="warningsList">Loading warning data...</div>
         </div>
       </div>
     </div>
@@ -455,15 +463,10 @@
 
     async function refreshLeaderboard() {
       try {
-        const res = await fetch(`/api/room/${roomCode}/participants?limit=250`);
-        if (!res.ok) throw new Error('Failed to load participants');
+        const res = await fetch(`/api/room/${roomCode}/winners`);
+        if (!res.ok) throw new Error('Failed to load leaderboard');
         
-        const { items } = await res.json();
-        
-        // Sort by score (descending) and take top 10
-        const topPlayers = (items || [])
-          .sort((a, b) => (b.score || 0) - (a.score || 0))
-          .slice(0, 10);
+        const topPlayers = await res.json();
         
         const list = document.getElementById('leaderboardList');
         if (topPlayers.length === 0) {
@@ -476,12 +479,27 @@
           const medalIcon = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : '';
           const rankClass = rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : '';
           
+          // Warning badge styling
+          const warningCount = player.warning_count || 0;
+          const isBanned = player.is_banned === 1;
+          let warningBadge = '';
+          
+          if (isBanned) {
+            warningBadge = '<span class="badge danger" style="margin-left: 8px;">BANNED</span>';
+          } else if (warningCount > 0) {
+            const warningClass = warningCount >= 3 ? 'danger' : warningCount >= 2 ? 'warning' : 'secondary';
+            warningBadge = `<span class="badge ${warningClass}" style="margin-left: 8px;">${warningCount}/4 ⚠️</span>`;
+          }
+          
           return `
-            <div class="leaderboard-item">
+            <div class="leaderboard-item" style="${isBanned ? 'opacity: 0.7; background: rgba(239, 68, 68, 0.1);' : ''}">
               <div style="display:flex;align-items:center;gap:10px;">
                 <div class="rank ${rankClass}">${rank}</div>
                 <div style="flex: 1;">
-                  <div style="font-weight:500;">${medalIcon} ${player.name || 'Anonymous'}</div>
+                  <div style="font-weight:500;">
+                    ${medalIcon} ${player.name || 'Anonymous'}
+                    ${warningBadge}
+                  </div>
                   <div class="muted" style="font-size:11px;">${player.email || 'No email'}</div>
                   <div class="muted" style="font-size:11px;">📞 ${player.phone || 'No phone'}</div>
                 </div>
@@ -492,12 +510,15 @@
         }).join('');
         
         // Update the display to show how many total players
-        const totalWithScores = items.filter(p => (p.score || 0) > 0).length;
-        if (totalWithScores > 10) {
+        const totalPlayers = topPlayers.length;
+        const activePlayers = topPlayers.filter(p => !p.is_banned).length;
+        const bannedPlayers = topPlayers.filter(p => p.is_banned).length;
+        
+        if (totalPlayers > 0) {
           list.innerHTML += `
             <div style="text-align: center; margin-top: 12px; padding: 8px;">
               <div class="muted" style="font-size: 12px;">
-                Showing top 10 of ${totalWithScores} players with scores
+                Showing top ${totalPlayers} players${bannedPlayers > 0 ? ` (${bannedPlayers} banned)` : ''}
               </div>
             </div>
           `;
@@ -543,6 +564,79 @@
     function refreshAllData() {
       loadParticipants();
       refreshLeaderboard();
+      loadWarnings();
+    }
+
+    // Load warnings and banned players
+    async function loadWarnings() {
+      try {
+        const response = await fetch(`/api/room/${roomCode}/warnings`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch warnings: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        renderWarnings(data);
+      } catch (error) {
+        console.error('Error loading warnings:', error);
+        const warningsList = document.getElementById('warningsList');
+        warningsList.innerHTML = '<p class="muted">Failed to load warning data</p>';
+      }
+    }
+
+    function renderWarnings(data) {
+      const warningsList = document.getElementById('warningsList');
+      const warnings = data.warnings || [];
+      const banned = data.banned || [];
+
+      let html = '';
+
+      // Show banned players first
+      if (banned.length > 0) {
+        html += '<div style="margin-bottom: 16px;"><h4 style="color: var(--danger); margin: 0 0 8px 0;">🚫 Banned Players</h4>';
+        banned.forEach(player => {
+          const banDate = new Date(player.banned_at).toLocaleString();
+          html += `
+            <div class="participant-item" style="border-left: 4px solid var(--danger);">
+              <div>
+                <strong>${player.name || 'Unknown'}</strong><br>
+                <small class="muted">${player.player_email} • ${player.player_phone}</small><br>
+                <small style="color: var(--danger);">Banned: ${banDate} (${player.warning_count} warnings)</small>
+              </div>
+              <span class="badge danger">BANNED</span>
+            </div>
+          `;
+        });
+        html += '</div>';
+      }
+
+      // Show players with warnings
+      if (warnings.length > 0) {
+        html += '<div><h4 style="color: var(--warning); margin: 0 0 8px 0;">⚠️ Players with Warnings</h4>';
+        warnings.forEach(warning => {
+          const lastWarning = new Date(warning.last_warning_at).toLocaleString();
+          const warningColor = warning.total_warnings >= 3 ? 'var(--danger)' : 'var(--warning)';
+          const warningBadge = warning.total_warnings >= 3 ? 'danger' : 'warning';
+          
+          html += `
+            <div class="participant-item" style="border-left: 4px solid ${warningColor};">
+              <div>
+                <strong>${warning.name}</strong><br>
+                <small class="muted">${warning.email} • ${warning.phone}</small><br>
+                <small>Last warning: ${lastWarning}</small>
+              </div>
+              <span class="badge ${warningBadge}">${warning.total_warnings}/4 Warnings</span>
+            </div>
+          `;
+        });
+        html += '</div>';
+      }
+
+      if (warnings.length === 0 && banned.length === 0) {
+        html = '<p class="muted">No warnings or bans recorded yet. 🎉</p>';
+      }
+
+      warningsList.innerHTML = html;
     }
 
     // Event listeners
@@ -550,6 +644,7 @@
     document.getElementById('refreshLeaderboard').addEventListener('click', refreshLeaderboard);
     document.getElementById('reloadP').addEventListener('click', loadParticipants);
     document.getElementById('refreshData').addEventListener('click', refreshAllData);
+    document.getElementById('refreshWarnings').addEventListener('click', loadWarnings);
     document.getElementById('psearch').addEventListener('input', () => {
       renderParticipantList(participantsData);
     });
@@ -570,6 +665,9 @@
 
     // Initialize
     connectSSE();
+    loadParticipants();
+    refreshLeaderboard();
+    loadWarnings();
     loadParticipants();
     refreshLeaderboard();
     loadQuestionsPreview();

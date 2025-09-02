@@ -48,10 +48,11 @@
     .progress{position:relative;height:8px;background:#0b1526;border:1px solid var(--border);border-radius:999px;overflow:hidden;margin-top:10px}
     .bar{position:absolute;left:0;top:0;bottom:0;width:0%;background:linear-gradient(90deg,#3b82f6,#22c55e)}
     /* toast */
-    .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111827;color:#e5e7eb;border:1px solid var(--border);border-radius:12px;padding:10px 14px;opacity:0;pointer-events:none;transition:opacity .2s ease}
+    .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111827;color:#e5e7eb;border:1px solid var(--border);border-radius:12px;padding:10px 14px;opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:99999}
     .toast.show{opacity:1}
     .toast.success{background:#0f2815;border-color:var(--success);color:var(--success)}
     .toast.error{background:#2d1b1b;border-color:var(--danger);color:var(--danger)}
+    .toast.warn{background:#2d1f0d;border-color:var(--warn);color:var(--warn)}
     /* connection status */
     .status-indicator{display:inline-flex;align-items:center;gap:6px}
     .status-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
@@ -182,6 +183,17 @@
   let chosenId = null;
   let deadline = 0;
   let timer = null;
+  
+  // Warning system variables
+  let warningCount = 0;
+  let isBanned = false;
+  let lastVisibilityChange = 0;
+  let warningCooldown = 5000; // 5 seconds cooldown between warnings
+  let isGameActive = false; // Only track warnings when game is active
+  let wasVisible = true; // Track previous visibility state
+  let visibilityTimer = null; // Timer to delay warning submission
+  let lastInteractionTime = 0; // Track last user interaction
+  let isUserInteracting = false; // Flag to track if user is actively interacting
 
   // elements
   const $reg = document.getElementById('register');
@@ -198,7 +210,7 @@
   const $toast = document.getElementById('toast');
 
   // Check for existing session on page load
-  function checkExistingSession() {
+  async function checkExistingSession() {
     try {
       const savedPlayer = localStorage.getItem(STORAGE_KEYS.player);
       const savedSession = localStorage.getItem(STORAGE_KEYS.session);
@@ -206,6 +218,33 @@
       if (savedPlayer && savedSession) {
         player = JSON.parse(savedPlayer);
         const sessionData = JSON.parse(savedSession);
+        
+        // Check if player is banned before restoring session
+        try {
+          const response = await fetch(`/api/room/${code}/ban-check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              playerId: player.id,
+              email: player.email,
+              phone: player.phone
+            })
+          });
+          
+          const banStatus = await response.json();
+          
+          if (banStatus.banned) {
+            console.log('Player is banned, clearing session');
+            clearStoredSession();
+            showBanMessage(banStatus.reason || 'You have been banned from this quiz room.');
+            return false;
+          }
+        } catch (error) {
+          console.error('Ban check failed:', error);
+          // If ban check fails, clear session to be safe
+          clearStoredSession();
+          return false;
+        }
         
         showGameInterface(true);
         connectSSE();
@@ -216,6 +255,24 @@
       clearStoredSession();
     }
     return false;
+  }
+  
+  // Show ban message and prevent access
+  function showBanMessage(reason) {
+    $reg.style.display = 'none';
+    $game.style.display = 'block';
+    
+    $qtext.textContent = 'Access Denied';
+    $note.textContent = reason;
+    $opts.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--danger); font-size: 18px; background: var(--panel); border-radius: 12px; border: 2px solid var(--danger);">🚫 You have been permanently banned from this quiz room due to excessive warnings.</div>';
+    setDisabled(true);
+    
+    // Show persistent ban notification
+    toast('🚫 BANNED: ' + reason, 10000, 'error');
+    
+    // Visual indication
+    document.body.style.border = '5px solid var(--danger)';
+    document.body.style.background = 'linear-gradient(45deg, var(--bg), #1a0000)';
   }
 
   function saveSession(playerData) {
@@ -246,9 +303,220 @@
     $playerName.textContent = player.name || 'Player';
     $playerId.textContent = (player.id || '').slice(0, 6);
     
+    // Activate warning system when game interface is shown
+    isGameActive = true;
+    
     if (isRestore) {
       $sessionBanner.style.display = 'flex';
       setTimeout(() => $sessionBanner.style.display = 'none', 5000);
+    }
+  }
+
+  // Warning system functions
+  async function submitWarning(warningType) {
+    if (!player || !isGameActive || isBanned) {
+      console.log(`Warning blocked: player=${!!player}, gameActive=${isGameActive}, banned=${isBanned}`);
+      return;
+    }
+    
+    // Cooldown to prevent spam
+    const now = Date.now();
+    if (now - lastVisibilityChange < warningCooldown) {
+      console.log(`Warning blocked by cooldown: ${now - lastVisibilityChange}ms since last warning`);
+      return;
+    }
+    lastVisibilityChange = now;
+    
+    console.log(`Submitting warning: ${warningType} for player ${player.id}`);
+    
+    try {
+      const response = await fetch(`/api/room/${code}/warning`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playerId: player.id,
+          warningType: warningType,
+          playerEmail: player.email,
+          playerPhone: player.phone
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.type === 'banned') {
+        isBanned = true;
+        isGameActive = false;
+        
+        // Clear any pending warning timers
+        if (visibilityTimer) {
+          clearTimeout(visibilityTimer);
+          visibilityTimer = null;
+        }
+        if (checkMinimizationTimer) {
+          clearTimeout(checkMinimizationTimer);
+          checkMinimizationTimer = null;
+        }
+        
+        toast(result.message, 10000, 'error');
+        
+        // Close connection and disable interface
+        if (eventSource) {
+          eventSource.close();
+        }
+        
+        // Show ban message
+        $qtext.textContent = 'Access Denied';
+        $note.textContent = result.message;
+        $opts.innerHTML = '';
+        setDisabled(true);
+        
+        // Force close the website after showing the message
+        setTimeout(() => {
+          alert('You have been banned from this quiz. The page will now close.');
+          if (window.opener || window.parent !== window) {
+            window.close();
+          } else {
+            // If we can't close the window, redirect to a blank page
+            document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;background:var(--bg);color:var(--danger);font-size:24px;text-align:center;"><div><h1>Access Denied</h1><p>You have been banned from this quiz room.</p></div></div>';
+          }
+        }, 3000);
+        
+      } else if (result.type === 'warning') {
+        warningCount = result.warningCount;
+        
+        // Use the prominent warning toast
+        warningToast(result.message, warningCount, 5000);
+        
+        // Visual warning indicator - more dramatic for higher warning counts
+        const warningColor = warningCount >= 3 ? 'var(--danger)' : 'var(--warn)';
+        document.body.style.border = `4px solid ${warningColor}`;
+        document.body.style.boxShadow = `inset 0 0 20px ${warningColor}`;
+        setTimeout(() => {
+          document.body.style.border = '';
+          document.body.style.boxShadow = '';
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Warning submission failed:', error);
+    }
+  }
+
+  function handleVisibilityChange() {
+    if (!isGameActive || isBanned) return;
+    
+    console.log(`Visibility change: hidden=${document.hidden}, wasVisible=${wasVisible}, gameActive=${isGameActive}`);
+    
+    // Clear any existing timer
+    if (visibilityTimer) {
+      clearTimeout(visibilityTimer);
+      visibilityTimer = null;
+    }
+    
+    // Only proceed if document becomes hidden and was previously visible
+    if (document.hidden && wasVisible) {
+      
+      // Check if this is likely a user-initiated action vs browser UI interaction
+      const timeSinceLastInteraction = Date.now() - lastInteractionTime;
+      
+      // Mobile-friendly detection - much shorter delays for mobile devices
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      const isTablet = /iPad|Android(?=.*\bMobile\b)/i.test(navigator.userAgent);
+      const isMobileDevice = isMobile || isTablet;
+      
+      console.log(`Device detection: isMobile=${isMobile}, isTablet=${isTablet}, isMobileDevice=${isMobileDevice}`);
+      
+      // Adjust delays based on device type - very aggressive on mobile
+      const initialDelay = isMobileDevice ? 500 : 5000; // 0.5s for mobile, 5s for desktop
+      const verificationDelay = isMobileDevice ? 500 : 3000; // 0.5s for mobile, 3s for desktop
+      const interactionThreshold = isMobileDevice ? 500 : 5000; // 0.5s for mobile, 5s for desktop
+      
+      // Additional checks to prevent false positives
+      const isDevToolsOpen = window.outerHeight - window.innerHeight > 200; // Large height difference suggests dev tools
+      const isLikelyUIInteraction = timeSinceLastInteraction < 200; // Very recent interaction suggests UI click
+      
+      // On mobile, be very aggressive - almost immediate warning
+      if (isMobileDevice) {
+        console.log(`Mobile device - applying fast detection (${initialDelay}ms initial, ${verificationDelay}ms verification)`);
+        
+        // Only skip for extremely recent interactions on mobile
+        if (isLikelyUIInteraction || isUserInteracting) {
+          console.log('Mobile: Skipping due to very recent interaction');
+          wasVisible = !document.hidden;
+          return;
+        }
+        
+        // Immediate warning for mobile devices
+        if (initialDelay === 500) {
+          setTimeout(() => {
+            if (document.hidden && isGameActive && !isBanned) {
+              console.log('Mobile: Immediate warning trigger');
+              submitWarning('mobile_immediate');
+            }
+          }, verificationDelay);
+          wasVisible = !document.hidden;
+          return;
+        }
+      }
+      
+      // Desktop: Skip warning if likely a false positive scenario
+      if (!isMobileDevice && (isDevToolsOpen || isLikelyUIInteraction || isUserInteracting)) {
+        wasVisible = !document.hidden;
+        return;
+      }
+      
+      // Use device-appropriate delay to ensure this is a sustained visibility change
+      visibilityTimer = setTimeout(() => {
+        // Triple-check conditions before submitting warning
+        if (document.hidden && 
+            isGameActive && 
+            !isBanned && 
+            !isUserInteracting) {
+          
+          // Final verification with device-appropriate delay
+          setTimeout(() => {
+            if (document.hidden && 
+                isGameActive && 
+                !isBanned && 
+                (!document.hasFocus || isMobileDevice) && // Mobile apps don't always lose focus
+                Date.now() - lastInteractionTime > interactionThreshold) {
+              
+              console.log(`Warning triggered: Sustained visibility loss detected (${isMobileDevice ? 'mobile' : 'desktop'} device)`);
+              submitWarning('window_minimized');
+            }
+          }, verificationDelay);
+        }
+      }, initialDelay);
+    }
+    
+    wasVisible = !document.hidden;
+  }
+
+  // Track user interactions to better understand visibility changes
+  function trackUserInteraction() {
+    lastInteractionTime = Date.now();
+    isUserInteracting = true;
+    
+    // Clear the interaction flag after a short delay
+    setTimeout(() => {
+      isUserInteracting = false;
+    }, 100);
+  }
+
+  function handleWindowBlur() {
+    // Remove this function - we don't want to trigger on window blur
+    // Only rely on visibility change for proper detection
+    return;
+  }
+
+  function handleWindowFocus() {
+    // Optional: Could show a reminder when user returns
+    if (!isGameActive || isBanned) return;
+    
+    // Show reminder toast when user returns to tab only if they have warnings
+    if (warningCount > 0 && !document.hidden) {
+      setTimeout(() => {
+        toast(`Warning ${warningCount}/4: Please keep this tab active during the quiz`, 3000, 'warn');
+      }, 500);
     }
   }
 
@@ -266,10 +534,44 @@
   }
 
   function toast(msg, ms = 1400, type = 'info') {
+    console.log(`Displaying toast: ${msg} (${type})`);
     $toast.textContent = msg;
     $toast.className = `toast ${type}`;
     $toast.classList.add('show');
-    setTimeout(() => $toast.classList.remove('show'), ms);
+    
+    // Force the toast to be visible even in fullscreen
+    $toast.style.zIndex = '99999';
+    $toast.style.position = 'fixed';
+    
+    setTimeout(() => {
+      $toast.classList.remove('show');
+      console.log('Toast hidden');
+    }, ms);
+  }
+  
+  // Special function for warning toasts - more prominent
+  function warningToast(msg, warningCount, ms = 4000) {
+    console.log(`Displaying WARNING toast: ${msg} (Warning ${warningCount}/4)`);
+    const warningMsg = `⚠️ Warning ${warningCount}/4: ${msg}`;
+    
+    $toast.textContent = warningMsg;
+    $toast.className = `toast error`;
+    $toast.classList.add('show');
+    
+    // Make warning toast extra prominent
+    $toast.style.zIndex = '999999';
+    $toast.style.position = 'fixed';
+    $toast.style.fontSize = '16px';
+    $toast.style.fontWeight = 'bold';
+    $toast.style.boxShadow = '0 0 20px rgba(239, 68, 68, 0.5)';
+    
+    setTimeout(() => {
+      $toast.classList.remove('show');
+      $toast.style.fontSize = '';
+      $toast.style.fontWeight = '';
+      $toast.style.boxShadow = '';
+      console.log('Warning toast hidden');
+    }, ms);
   }
 
   function setDisabled(dis) {
@@ -489,6 +791,44 @@
       handleResult(data);
     });
     
+    eventSource.addEventListener('banned', (event) => {
+      const data = JSON.parse(event.data);
+      isBanned = true;
+      isGameActive = false;
+      
+      // Clear any pending warning timers
+      if (visibilityTimer) {
+        clearTimeout(visibilityTimer);
+        visibilityTimer = null;
+      }
+      if (checkMinimizationTimer) {
+        clearTimeout(checkMinimizationTimer);
+        checkMinimizationTimer = null;
+      }
+      
+      toast(data.message, 10000, 'error');
+      
+      // Close connection and disable interface
+      eventSource.close();
+      
+      // Show ban message
+      $qtext.textContent = 'Access Denied';
+      $note.textContent = data.message;
+      $opts.innerHTML = '';
+      setDisabled(true);
+      
+      // Force close the website after showing the message
+      setTimeout(() => {
+        alert('You have been banned from this quiz. The page will now close.');
+        if (window.opener || window.parent !== window) {
+          window.close();
+        } else {
+          // If we can't close the window, redirect to a blank page
+          document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;background:var(--bg);color:var(--danger);font-size:24px;text-align:center;"><div><h1>Access Denied</h1><p>You have been banned from this quiz room.</p></div></div>';
+        }
+      }, 3000);
+    });
+    
     eventSource.addEventListener('presence', (event) => {
       const data = JSON.parse(event.data);
       console.log('Presence update:', data.count);
@@ -515,30 +855,12 @@
     stopCountdown();
     setDisabled(true);
     
-    // Players only receive the correct answer ID - no scores or leaderboards
-    // Show correct/incorrect for chosen answer
-    if (chosenId && data.correct_option_id) {
-      document.querySelectorAll('.opt').forEach(el => {
-        if (el.dataset.optionId === chosenId) {
-          if (chosenId === data.correct_option_id) {
-            el.classList.add('correct');
-            toast('Correct! 🎉', 2000, 'success');
-          } else {
-            el.classList.add('incorrect');
-            toast('Incorrect answer', 2000, 'error');
-          }
-        }
-        // Also highlight the correct answer for learning
-        if (el.dataset.optionId === data.correct_option_id) {
-          el.style.outline = '2px solid var(--success)';
-          el.style.backgroundColor = 'rgba(22, 163, 74, 0.1)';
-        }
-      });
-    }
+    // Players do NOT receive feedback on whether their answer was correct or incorrect
+    // This prevents them from knowing the results until the quiz is complete
     
-    $note.textContent = 'Results received. Waiting for next question...';
+    $note.textContent = 'Answer submitted. Waiting for next question...';
     
-    // Clear after a few seconds
+    // Clear after a few seconds without showing any correct/incorrect feedback
     setTimeout(() => {
       clearOptions();
       $qtext.textContent = 'Waiting for next question…';
@@ -558,13 +880,259 @@
 
   // Handle page visibility changes (user switches tabs/apps)
   document.addEventListener('visibilitychange', () => {
+    // Check for mobile device first
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    // On mobile, trigger immediate warning when hidden
+    if (isMobile && document.hidden && isGameActive && !isBanned) {
+      console.log('Mobile visibility change: IMMEDIATE WARNING TRIGGER');
+      setTimeout(() => {
+        if (document.hidden && isGameActive && !isBanned) {
+          console.log('Mobile confirmed hidden - submitting warning');
+          submitWarning('mobile_visibility_immediate');
+        }
+      }, 300); // Very short delay to avoid race conditions
+    }
+    
+    // Also run the regular detection logic
+    handleVisibilityChange();
+    
+    // Also trigger the enhanced minimization check
+    if (document.hidden) {
+      checkIfMinimized();
+    }
+    
     if (!document.hidden && player && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
       connectSSE();
     }
   });
 
+  // Track user interactions to reduce false positives
+  // These interactions suggest the user is actively using the browser UI
+  document.addEventListener('mousedown', trackUserInteraction);
+  document.addEventListener('keydown', trackUserInteraction);
+  document.addEventListener('click', trackUserInteraction);
+  
+  // Additional safeguards for common false positive scenarios
+  document.addEventListener('focusin', trackUserInteraction);  // User clicked on input field
+  document.addEventListener('focusout', trackUserInteraction); // User left input field
+  
+  // Mobile-specific event listeners for better app switching detection
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
+  if (isMobile) {
+    console.log('Mobile device detected - enabling enhanced mobile detection');
+    
+    // Mobile browsers often use these events for app switching
+    window.addEventListener('blur', () => {
+      console.log('Mobile window blur detected');
+      if (isGameActive && !isBanned) {
+        setTimeout(() => {
+          if (document.hidden && isGameActive && !isBanned) {
+            console.log('Mobile app switch confirmed via blur');
+            submitWarning('mobile_app_switch');
+          }
+        }, 500); // Very short delay for mobile blur
+      }
+    });
+    
+    // Handle mobile back button and navigation
+    window.addEventListener('beforeunload', (e) => {
+      if (isGameActive && !isBanned) {
+        console.log('Mobile beforeunload - possible navigation away');
+        // Don't prevent the navigation, but log the warning
+        submitWarning('mobile_navigation');
+      }
+    });
+    
+    // Page hide event for mobile (more reliable than visibilitychange on some mobile browsers)
+    document.addEventListener('pagehide', () => {
+      if (isGameActive && !isBanned) {
+        console.log('Mobile pagehide detected');
+        submitWarning('mobile_pagehide');
+      }
+    });
+    
+    // Touch events to track mobile interactions
+    document.addEventListener('touchstart', trackUserInteraction);
+    document.addEventListener('touchend', trackUserInteraction);
+  }
+  
+  // Fullscreen change detection - critical for mobile devices
+  function handleFullscreenChange() {
+    const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || 
+                            document.mozFullScreenElement || document.msFullscreenElement);
+    
+    console.log(`Fullscreen change detected: isFullscreen=${isFullscreen}, gameActive=${isGameActive}`);
+    
+    // If user exits fullscreen while game is active, show warning and force manual re-entry
+    if (!isFullscreen && isGameActive && !isBanned) {
+      console.log('User exited fullscreen - showing warning and forcing manual re-entry');
+      
+      // Visual flash effect to alert user
+      document.body.style.background = 'var(--danger)';
+      document.body.style.transition = 'background 0.3s ease';
+      
+      // Submit warning to database
+      submitWarning('fullscreen_exit');
+      
+      // Show prominent warning that blocks the quiz until fullscreen is restored
+      showFullscreenRequiredOverlay();
+      
+      // Restore background after flash
+      setTimeout(() => {
+        document.body.style.background = 'var(--bg)';
+      }, 300);
+    }
+  }
+  
+  // Show overlay that forces user to manually re-enter fullscreen
+  function showFullscreenRequiredOverlay() {
+    // Create or update the overlay
+    let overlay = document.getElementById('fullscreen-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'fullscreen-overlay';
+      document.body.appendChild(overlay);
+    }
+    
+    overlay.innerHTML = `
+      <div style="
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0, 0, 0, 0.95);
+        z-index: 999999;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        color: white;
+        font-family: system-ui;
+        text-align: center;
+        padding: 20px;
+      ">
+        <div style="
+          background: var(--danger);
+          padding: 30px;
+          border-radius: 20px;
+          max-width: 500px;
+          margin: 20px;
+          border: 3px solid #fff;
+        ">
+          <h1 style="margin: 0 0 20px 0; font-size: 2rem;">⚠️ FULLSCREEN REQUIRED</h1>
+          <p style="font-size: 1.2rem; margin: 15px 0;">You exited fullscreen mode during the quiz!</p>
+          <p style="font-size: 1rem; margin: 15px 0; color: #ffcccc;">This action has been logged as a warning.</p>
+          <button onclick="enterFullscreenFromOverlay()" style="
+            background: var(--success);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.1rem;
+            border-radius: 10px;
+            cursor: pointer;
+            margin: 20px 10px;
+            font-weight: bold;
+          ">🔒 ENTER FULLSCREEN TO CONTINUE</button>
+          <p style="font-size: 0.9rem; color: #ffcccc; margin-top: 15px;">
+            Quiz is paused until you return to fullscreen mode
+          </p>
+        </div>
+      </div>
+    `;
+    
+    overlay.style.display = 'block';
+    
+    // Disable the quiz interface
+    setDisabled(true);
+    
+    // Show warning toast as well
+    toast('⚠️ WARNING: Fullscreen exit detected! Click button to continue quiz.', 6000, 'error');
+  }
+  
+  // Function to re-enter fullscreen from the overlay (user-triggered)
+  function enterFullscreenFromOverlay() {
+    enterFullscreen().then(() => {
+      // Hide the overlay
+      const overlay = document.getElementById('fullscreen-overlay');
+      if (overlay) {
+        overlay.style.display = 'none';
+      }
+      
+      // Re-enable the quiz interface
+      setDisabled(false);
+      
+      // Show success message
+      toast('✅ Fullscreen restored! Quiz resumed. Avoid exiting fullscreen again.', 4000, 'success');
+      
+    }).catch(err => {
+      console.error('Failed to re-enter fullscreen:', err);
+      toast('❌ Fullscreen failed. Please try again or use F11 key.', 5000, 'error');
+    });
+  }
+  
+  // Make the function globally available
+  window.enterFullscreenFromOverlay = enterFullscreenFromOverlay;
+  
+  // Add fullscreen change listeners for all browsers
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+  document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+  document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+  
+  // Use Page Lifecycle API if available for more accurate detection
+  if ('onfreeze' in document) {
+    document.addEventListener('freeze', () => {
+      console.log('Page frozen - likely backgrounded/minimized');
+      if (isGameActive && !isBanned) {
+        // This is a more reliable indicator of actual backgrounding
+        setTimeout(() => {
+          if (document.hidden && isGameActive && !isBanned) {
+            submitWarning('page_backgrounded');
+          }
+        }, 500);
+      }
+    });
+  }
+  
+  // Additional check for actual window minimization using window properties
+  let checkMinimizationTimer = null;
+  
+  function checkIfMinimized() {
+    if (!isGameActive || isBanned) return;
+    
+    // Clear existing timer
+    if (checkMinimizationTimer) {
+      clearTimeout(checkMinimizationTimer);
+    }
+    
+    checkMinimizationTimer = setTimeout(() => {
+      // Check multiple indicators of minimization
+      const isHidden = document.hidden;
+      const hasNoFocus = !document.hasFocus || !document.hasFocus();
+      const windowInactive = document.visibilityState === 'hidden';
+      const noRecentInteraction = Date.now() - lastInteractionTime > 2000;
+      
+      if (isHidden && hasNoFocus && windowInactive && noRecentInteraction && isGameActive && !isBanned) {
+        console.log('Confirmed minimization detected');
+        submitWarning('confirmed_minimization');
+      }
+    }, 2000); // 2-second verification period
+  }
+  
   // Handle page unload (save state)
   window.addEventListener('beforeunload', () => {
+    isGameActive = false; // Stop tracking warnings
+    
+    // Clear any pending warning timers
+    if (visibilityTimer) {
+      clearTimeout(visibilityTimer);
+      visibilityTimer = null;
+    }
+    if (checkMinimizationTimer) {
+      clearTimeout(checkMinimizationTimer);
+      checkMinimizationTimer = null;
+    }
+    
     if (player) {
       saveSession(player);
     }
@@ -576,15 +1144,29 @@
   // Fullscreen functionality
   function enterFullscreen() {
     const elem = document.documentElement;
-    if (elem.requestFullscreen) {
-      elem.requestFullscreen();
-    } else if (elem.mozRequestFullScreen) { // Firefox
-      elem.mozRequestFullScreen();
-    } else if (elem.webkitRequestFullscreen) { // Chrome, Safari and Opera
-      elem.webkitRequestFullscreen();
-    } else if (elem.msRequestFullscreen) { // IE/Edge
-      elem.msRequestFullscreen();
-    }
+    
+    return new Promise((resolve, reject) => {
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen().then(resolve).catch(reject);
+      } else if (elem.mozRequestFullScreen) { // Firefox
+        try {
+          elem.mozRequestFullScreen();
+          resolve();
+        } catch(e) { reject(e); }
+      } else if (elem.webkitRequestFullscreen) { // Chrome, Safari and Opera
+        try {
+          elem.webkitRequestFullscreen();
+          resolve();
+        } catch(e) { reject(e); }
+      } else if (elem.msRequestFullscreen) { // IE/Edge
+        try {
+          elem.msRequestFullscreen();
+          resolve();
+        } catch(e) { reject(e); }
+      } else {
+        reject(new Error('Fullscreen not supported'));
+      }
+    });
   }
 
   function exitFullscreen() {
@@ -630,6 +1212,18 @@
     if (!checkExistingSession()) {
       updateConnectionStatus('waiting');
     }
+    
+    // Add debug functionality for testing (only in development)
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      window.testWarning = function() {
+        console.log('Testing warning system...');
+        isGameActive = true;
+        player = { id: 'test-player', name: 'Test Player' };
+        warningToast('Test warning message', 1, 5000);
+      };
+      console.log('Debug mode: Use window.testWarning() to test warning display');
+    }
+    
   } else {
     // No room code provided
     document.getElementById('room').textContent = 'No room code provided';
